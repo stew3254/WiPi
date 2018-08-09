@@ -20,4 +20,3 @@ cp /etc/dhcpcd.conf /etc/dhcpcd.conf.online
 
 
 echo -e "interface wlan0\n\tstatic ip_address=192.168.4.1/24\n\tnohook wpa_supplicant" | tee -a /etc/dhcpcd.conf
-service dhcpcd restart
