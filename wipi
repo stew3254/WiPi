@@ -1,0 +1,172 @@
+#!/bin/bash
+
+#Set the access point name
+if [ -z $2 ]; then
+  name="Test"
+else
+  name="$2"
+fi
+
+#Create new hostapd config file
+hostapdConfigure() {
+  #Create the config file
+  wap="interface=wlan0\ndriver=nl80211\nssid=$name\nhw_mode=g\nchannel=1\nwmm_enabled=0\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0"
+
+  echo -e $wap> /etc/hostapd/hostapd.conf
+
+  #Make sure our config file gets loaded
+  sed -ie 's/DAEMON_CONF="/DAEMON_CONF="\/etc\/hostapd\/hostapd.conf/g' /etc/default/hostapd
+  sed -ie 's/#DAEMON_CONF/DAEMON_CONF/g' /etc/default/hostapd
+}
+
+#Set up hostapd and dnsmasq
+setup() {
+  #dnsmasq and hostapd configs
+  dnsmasqConfig=false
+  hostapdConfig=false
+
+  #Check if the dnsmasq.conf file exists
+  checkConfig="`ls /etc | grep dnsmasq.conf`"
+  for i in $checkConfig; do
+    #Check to see if that exact config file exists
+    if [ "$i" == "dnsmasq.conf" ]; then
+      dnsmasqConfig=true
+      break
+    fi
+  done
+
+  #If config exists, leave it. Otherwise create a new one
+  if [ $dnsmasqConfig == true ]; then
+    echo "dnsmasq config file found. Leaving existing config."
+  else
+    echo -e "interface=wlan0\n
+    \tdhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" > /etc/dnsmasq.conf
+    echo "dnsmasq config file not found. Created a new one"
+  fi
+
+  #Check to see if a hostapd config file exists
+  checkConfig="`ls /etc/hostapd | grep hostapd.conf`"
+  for i in $checkConfig; do
+    #Check to see if that exact config file exists
+    if [ "$i" == "hostapd.conf" ]; then
+      hostapdConfig=true
+      break
+    fi
+  done
+
+  #If config exists, leave it. Otherwise create a new one
+  if [ $hostapdConfig == true ]; then
+    echo "hostapd config file found. Creating a backup of the old one."
+    mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.old
+    echo "Backup file located at /etc/hostapd/hostapd.conf.old"
+    hostapdConfigure
+  else
+    hostapdConfigure
+    echo "hostapd config file not found. Created a new one"
+  fi
+}
+
+#Check to make sure the dependencies are installed
+checkDepends() {
+  depend="wireless-tools hostapd dnsmasq"
+
+  #Check for each dependency
+  for item in $depend; do
+    #Check in the installed programs lists
+    programList="`dpkg -l | grep $item | sed -e 's/  */ /g' | cut -d ' ' -f 2`"
+    realProgram=""
+
+    #Go through each program found in the list and make sure it's actually correct
+    for program in $programList; do
+      #Check to make sure the program has the exact same name
+      if [ $program == $item ]; then
+        realProgram="$item"
+      fi
+    done
+
+    if [ -z $realProgram ]; then
+      #Read input
+      read -p "$item not installed. Would you like to install it now? (y/n) " input
+
+      #Check to make sure the user agrees
+      #If so install it. It not, exit the program. Otherwise, wait for a valid option
+      while true; do
+        if [ "$input" == "y" ] || [ "$input" == "Y" ]; then
+          apt install $item -y
+          systemctl stop $item
+          break
+        elif [ "$input" == "n" ] || [ "$input" == "N" ]; then
+          echo "Exiting"
+          exit 1
+        else
+          read -p "Please enter a valid option. (y/n) " input
+        fi
+      done
+    fi
+  done
+
+  setup
+}
+
+#Make sure user is root
+if [ $EUID -ne 0 ]; then
+  echo "You must be root in order to run this program"
+  exit 1
+fi
+
+#Check to see if the access point should be started
+if [ "$1" = "start" ]; then
+  #Check to make sure the dependencies are installed
+  checkDepends
+
+  echo "Attempting to start the access point"
+
+  echo "Killing conflicting processes"
+  #Set up the access point
+  airmon-ng check kill &> /dev/null
+
+  #Configure hostapd
+  hostapdConfigure
+
+  #Set the access point into monitor mode
+  echo "Putting the access point into monitor mode"
+  ip l set wlan0 down
+  iwconfig wlan0 mode monitor
+  ip l set wlan0 up
+
+  #Start the access point
+  echo "Starting access point $name"
+  hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
+
+  #Add an ip address
+  echo "Adding static ip 192.168.4.1 to interface wlan0"
+  ip a add 192.168.4.1/24 dev wlan0
+  #echo "Adding static route to 192.168.4.1"
+  #ip r add default via 192.168.4.1 dev at0
+
+  #Start the dhcp and dns server
+  echo "Starting dnsmasq"
+  systemctl restart dnsmasq
+
+#Check to see if the access point should be stopped
+elif [ "$1" = "stop" ]; then
+  #Kill dnsmasq
+  echo "Stopping dnsmasq"
+  systemctl stop dnsmasq
+
+  #Kill the access point
+  echo "Stopping hostapd"
+  pkill hostapd
+
+  echo "Putting the interface back into managed mode"
+  #Put the interface back into managed mode
+  ip a del 192.168.4.1/24 dev wlan0
+  ip l set wlan0 down
+  iwconfig wlan0 mode managed
+  ip l set wlan0 up
+
+#Message for help if the command is used wrong
+else
+  echo "Usage:"
+  echo "wipi [start|stop] <Access Point Name>"
+fi
