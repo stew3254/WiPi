@@ -1,16 +1,35 @@
 #!/bin/bash
 
-#Set the access point name
-if [ -z $2 ]; then
-  name="Test"
-else
-  name="$2"
-fi
+#Show help
+showHelp() {
+  echo "Usage: $(basename $0) [start|stop] [OPTIONS] <interface>" >&2
+  echo "Used to create wireless access points with ease"
+  echo
+  echo "OPTIONS:"
+  echo -e "  -h  --help\t\t\tShows this menu"
+  echo -e "  -e  --essid\t<ESSID>\t\tESSID of the access point"
+  echo -e "  -c  --channel\t<channel>\tChannel the access point is broadcasted on"
+  echo
+  echo "Examples:"
+  echo -e "  $(basename $0) start -e 'Free WiFi' -c11 wlan0"
+  echo -e "  $(basename $0) stop wlan0"
+}
+
+#Check to see if the interface exists. If not, exit
+checkInterface() {
+  if [ -z "$interface" ]; then
+    echo "No interface specified. Please specify a wireless interface"
+    exit 1;
+  elif [ -z "`ip l | grep $interface`" ]; then
+    echo "Interface $interface does not exist. Please choose an interface that exists"
+    exit 1;
+  fi
+}
 
 #Create new hostapd config file
 hostapdConfigure() {
   #Create the config file
-  wap="interface=wlan0\ndriver=nl80211\nssid=$name\nhw_mode=g\nchannel=1\nwmm_enabled=0\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0"
+  wap="interface=$interface\ndriver=nl80211\nssid=$name\nhw_mode=g\nchannel=$channel\nwmm_enabled=0\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0"
 
   echo -e $wap> /etc/hostapd/hostapd.conf
 
@@ -29,17 +48,17 @@ setup() {
   checkConfig="`ls /etc | grep dnsmasq.conf`"
   for i in $checkConfig; do
     #Check to see if that exact config file exists
-    if [ "$i" == "dnsmasq.conf" ]; then
+    if [ "$i" = "dnsmasq.conf" ]; then
       dnsmasqConfig=true
       break
     fi
   done
 
   #If config exists, leave it. Otherwise create a new one
-  if [ $dnsmasqConfig == true ]; then
+  if [ $dnsmasqConfig = true ]; then
     echo "dnsmasq config file found. Leaving existing config."
   else
-    echo -e "interface=wlan0\n
+    echo -e "interface=$interface\n
     \tdhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" > /etc/dnsmasq.conf
     echo "dnsmasq config file not found. Created a new one"
   fi
@@ -48,14 +67,14 @@ setup() {
   checkConfig="`ls /etc/hostapd | grep hostapd.conf`"
   for i in $checkConfig; do
     #Check to see if that exact config file exists
-    if [ "$i" == "hostapd.conf" ]; then
+    if [ "$i" = "hostapd.conf" ]; then
       hostapdConfig=true
       break
     fi
   done
 
   #If config exists, leave it. Otherwise create a new one
-  if [ $hostapdConfig == true ]; then
+  if [ $hostapdConfig = true ]; then
     echo "hostapd config file found. Creating a backup of the old one."
     mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.old
     echo "Backup file located at /etc/hostapd/hostapd.conf.old"
@@ -68,7 +87,7 @@ setup() {
 
 #Check to make sure the dependencies are installed
 checkDepends() {
-  depend="wireless-tools hostapd dnsmasq"
+  depend="getopt wireless-tools iptables hostapd dnsmasq"
 
   #Check for each dependency
   for item in $depend; do
@@ -79,7 +98,7 @@ checkDepends() {
     #Go through each program found in the list and make sure it's actually correct
     for program in $programList; do
       #Check to make sure the program has the exact same name
-      if [ $program == $item ]; then
+      if [ $program = $item ]; then
         realProgram="$item"
       fi
     done
@@ -91,13 +110,13 @@ checkDepends() {
       #Check to make sure the user agrees
       #If so install it. It not, exit the program. Otherwise, wait for a valid option
       while true; do
-        if [ "$input" == "y" ] || [ "$input" == "Y" ]; then
+        if [ "$input" = "y" ] || [ "$input" = "Y" ]; then
           apt install $item -y
           systemctl stop $item
           break
-        elif [ "$input" == "n" ] || [ "$input" == "N" ]; then
+        elif [ "$input" = "n" ] || [ "$input" = "N" ]; then
           echo "Exiting"
-          exit 1
+          exit 0
         else
           read -p "Please enter a valid option. (y/n) " input
         fi
@@ -114,33 +133,75 @@ if [ $EUID -ne 0 ]; then
   exit 1
 fi
 
+#Set default parameters
+mode="$1"
+interface=""
+name="Test"
+channel=1
+
+#Read the options and set them
+OPTIONS=`getopt -o he:c: --long help,essid:,channel: -n $(basename $0) -- "$@"`
+eval set -- "$OPTIONS"
+
+#Extract options and their arguments into variables.
+while true ; do
+    case "$1" in
+        -h|--help) showHelp; exit 0 ;; #Show help
+        -e|--essid) shift; name=$1; shift; ;; #Set the name
+        -c|--channel) shift; channel=$1; shift; ;; #Set the channel
+        --) shift ; break ;; #Break to parse non opts
+        *) echo "Internal error!" ; exit 1 ;; #SHTF! EXIT NOW!
+    esac
+done
+interface="$2"
+
 #Check to see if the access point should be started
-if [ "$1" = "start" ]; then
+if [ "$mode" = "start" ]; then
+  #Check to see if the interface exists
+  checkInterface
+
   #Check to make sure the dependencies are installed
   checkDepends
 
-  echo "Attempting to start the access point"
+  #Set up iptables rules
+  echo "Saving existing iptables rules to /etc/iptables.ipv4.nat"
+  sh -c "iptables-save" > /etc/iptables.ipv4.nat
 
-  echo "Killing conflicting processes"
-  #Set up the access point
-  airmon-ng check kill &> /dev/null
+  echo "Creating new routing rules"
+  iptables -F
+  iptables -t nat -A  POSTROUTING -o eth0 -j MASQUERADE
+  iptables -i $interface -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -i $interface -A INPUT -p tcp --dport 80 -j ACCEPT
+  iptables -i $interface -A INPUT -p udp --dport 53 -j ACCEPT
+  iptables -i $interface -A INPUT -p tcp --dport 22 -j ACCEPT
+  iptables -i $interface -A INPUT -j DROP
+
+  #Enable ip forwarding
+  echo "Enabling ip forwarding"
+  echo 1 > /proc/sys/net/ipv4/ip_forward
+
+  #Killing conflicting processes
+  echo "Killing Network Manager"
+  pkill NetworkManager
+  echo "Killing wpa supplicant"
+  pkill wpa_supplicant
 
   #Configure hostapd
   hostapdConfigure
 
   #Set the access point into monitor mode
-  echo "Putting the access point into monitor mode"
-  ip l set wlan0 down
-  iwconfig wlan0 mode monitor
-  ip l set wlan0 up
+  echo "Putting the interface into monitor mode"
+  ip l set $interface down
+  iwconfig $interface mode monitor
+  ip l set $interface up
 
   #Start the access point
   echo "Starting access point $name"
   hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
 
   #Add an ip address
-  echo "Adding static ip 192.168.4.1 to interface wlan0"
-  ip a add 192.168.4.1/24 dev wlan0
+  echo "Adding static ip 192.168.4.1 to interface $interface"
+  ip a add 192.168.4.1/24 dev $interface
   #echo "Adding static route to 192.168.4.1"
   #ip r add default via 192.168.4.1 dev at0
 
@@ -149,7 +210,10 @@ if [ "$1" = "start" ]; then
   systemctl restart dnsmasq
 
 #Check to see if the access point should be stopped
-elif [ "$1" = "stop" ]; then
+elif [ "$mode" = "stop" ]; then
+  #Check to see if the interface exists
+  checkInterface
+
   #Kill dnsmasq
   echo "Stopping dnsmasq"
   systemctl stop dnsmasq
@@ -160,13 +224,16 @@ elif [ "$1" = "stop" ]; then
 
   echo "Putting the interface back into managed mode"
   #Put the interface back into managed mode
-  ip a del 192.168.4.1/24 dev wlan0
-  ip l set wlan0 down
-  iwconfig wlan0 mode managed
-  ip l set wlan0 up
+  ip a del 192.168.4.1/24 dev $interface
+  ip l set $interface down
+  iwconfig $interface mode managed
+  ip l set $interface up
+
+  #Restore iptables rules
+  echo "Restoring old iptables rules"
+  iptables-restore < /etc/iptables.ipv4.nat
 
 #Message for help if the command is used wrong
 else
-  echo "Usage:"
-  echo "wipi [start|stop] <Access Point Name>"
+  showHelp
 fi
