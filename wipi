@@ -87,7 +87,7 @@ setup() {
 
 #Check to make sure the dependencies are installed
 checkDepends() {
-  depend="getopt wireless-tools iptables hostapd dnsmasq"
+  depend="wireless-tools iptables hostapd dnsmasq"
 
   #Check for each dependency
   for item in $depend; do

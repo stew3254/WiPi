@@ -1,18 +1,17 @@
 # WiPi
-
 #### By: stew3254
 
-### Used to turn a Raspberry Pi into a wireless access point.
+### Used to turn a Raspberry Pi into a wireless access point
 
 This script allows you to set up a wireless access point with ease. In the matter of one command, an access point can be created and destroyed within mere seconds. It removes the hassle of learning how to configure services like hostapd, dnsmasq and iptables for basic uses. It's also beginner friendly and offers helpful feedback on how to use the command with command examples. The following is an example:
 
-```bash
+```
 # wipi start wlan0
 ```
 
 Help:
 
-```bash
+```
 # wipi -h
 Usage: wipi [start|stop] [OPTIONS] <interface>
 Used to create wireless access points with ease
