@@ -9,7 +9,7 @@ This script allows you to set up a wireless access point with ease. In the matte
 # wipi start wlan0
 ```
 
-Help:
+Example help command:
 
 ```
 # wipi -h
@@ -40,9 +40,19 @@ Examples:
 * You can't choose your own ip address range to have people to connect to
 * If you break dnsmasq.conf and don't remove the file, this tool won't work
 * If you don't have interface eth0 as your route for internet traffic, then you're SOL for internet access on the access point
+* Doesn't know how to handle errors from other software well
 
 **Todo:**
+* Figure out why the hostapd service is masked and fix it
 * Verbose option to print more helpful output and then print almost none if not invoked
+* Make error checking a whole lot better
+* Make better documentation
+  * Add code output examples
+  * Add a picture of the access point produced
+  * Show the leases table to show the dhcp working and a client is connected
+  * Show an output of the ping command from a connected client
+* Before starting or stopping an access point, check to see if the services are actually running first
 * More options to the access point such as password protection, and better iptables masquerading
-* More examples of how the command is used
 * Bridged access point mode option vs default NAT option
+* At least minimally check for proper dnsmasq and hostapd syntax
+* Maybe allow tab completion for the next reasonable argument

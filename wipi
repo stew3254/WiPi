@@ -9,10 +9,12 @@ showHelp() {
   echo -e "  -h  --help\t\t\tShows this menu"
   echo -e "  -e  --essid\t<ESSID>\t\tESSID of the access point"
   echo -e "  -c  --channel\t<channel>\tChannel the access point is broadcasted on"
+  echo -e "  -d  --domain\t<domain>\tDomain name of the local network created by dnsmasq"
   echo
   echo "Examples:"
-  echo -e "  $(basename $0) start -e 'Free WiFi' -c11 wlan0"
-  echo -e "  $(basename $0) stop wlan0"
+  echo -e "  $(basename $0) start -c 1 -d foo.net --essid Foo wlan0"
+  echo -e "  $(basename $0) start -e 'Free WiFi' -c11 wlp3s0"
+  echo -e "  $(basename $0) stop wlan1"
 }
 
 #Check to see if the interface exists. If not, exit
@@ -22,6 +24,14 @@ checkInterface() {
     exit 1;
   elif [ -z "`ip l | grep $interface`" ]; then
     echo "Interface $interface does not exist. Please choose an interface that exists"
+    exit 1;
+  #Fix this syntax later to something better
+  elif [[ "`iwconfig &> /tmp/monitor; grep $interface /tmp/monitor`" = *"no wireless extensions."* ]]; then
+    rm /tmp/monitor
+    echo "Interface $interface isn't a wireless card. Please choose an interface that is"
+    exit 1;
+  elif [ -z "`iw list | grep monitor`" ]; then
+    echo "Interface $interface doesn't support monitor mode. Unfortunately this script won't work without that"
     exit 1;
   fi
 }
@@ -58,8 +68,28 @@ setup() {
   if [ $dnsmasqConfig = true ]; then
     echo "dnsmasq config file found. Leaving existing config."
   else
-    echo -e "interface=$interface\n
-    \tdhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" > /etc/dnsmasq.conf
+    echo "domain-needed" > /etc/dnsmasq.conf #Blocks incomplete requests from leaving the network
+    echo "bogus-priv" >> /etc/dnsmasq.conf #Prevents private addresses from being forwarded
+    echo "no-resolv" >> /etc/dnsmasq.conf #Don't read /etc/resolv.conf for DNS servers
+    echo "domain=$domain" >> /etc/dnsmasq.conf #Set the local domain
+    echo "expand-hosts" >> /etc/dnsmasq.conf #Allow hosts to use this domain
+    echo "local=/$domain/ " >> /etc/dnsmasq.conf #Ensures the domain is private
+    echo "listen-address=127.0.0.1" >> /etc/dnsmasq.conf #Make sure dnsmasq listens on the right networks
+    echo "listen-address=192.168.4.1" >> /etc/dnsmasq.conf #Make sure dnsmasq listens on the right networks
+    echo ""  >> /etc/dnsmasq.conf
+    echo "interface=$interface" >> /etc/dnsmasq.conf #Set the interface to route on 
+    echo "  dhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" >> /etc/dnsmasq.conf #Set the ip range
+    echo "  dhcp-option=3,192.168.4.1" >> /etc/dnsmasq.conf #Set the router IP
+    echo "  dhcp-option=6,192.168.4.1" >> /etc/dnsmasq.conf #Set the DHCP server IP
+    echo "  server=8.8.8.8" >> /etc/dnsmasq.conf #Set upstream DNS server to Google
+    echo "  server=8.8.4.4" >> /etc/dnsmasq.conf #Set upstream DNS server to Google
+    echo ""  >> /etc/dnsmasq.conf
+    echo "bind-interfaces" >> /etc/dnsmasq.conf #Makes sure dnsmasq only listens on specified interfaces
+    echo "log-facility=/var/log/dnsmasq.log" >> /etc/dnsmasq.conf #Set the logs file
+    echo "log-queries" >> /etc/dnsmasq.conf #Logs queries
+    echo "log-dhcp" >> /etc/dnsmasq.conf #Logs dhcp
+
+    echo "192.168.4.1 $domain" > /etc/dnsmasq.hosts #Creates a dns entry to allow the domain to be pinged
     echo "dnsmasq config file not found. Created a new one"
   fi
 
@@ -138,9 +168,10 @@ mode="$1"
 interface=""
 name="Test"
 channel=1
+domain="mydomain.net"
 
 #Read the options and set them
-OPTIONS=`getopt -o he:c: --long help,essid:,channel: -n $(basename $0) -- "$@"`
+OPTIONS=`getopt -o he:c:d: --long help,essid:,channel: -n $(basename $0) -- "$@"`
 eval set -- "$OPTIONS"
 
 #Extract options and their arguments into variables.
@@ -149,6 +180,7 @@ while true ; do
         -h|--help) showHelp; exit 0 ;; #Show help
         -e|--essid) shift; name=$1; shift; ;; #Set the name
         -c|--channel) shift; channel=$1; shift; ;; #Set the channel
+        -d|--domain) shift; domain=$1; shift; ;; #Set the domain
         --) shift ; break ;; #Break to parse non opts
         *) echo "Internal error!" ; exit 1 ;; #SHTF! EXIT NOW!
     esac
@@ -172,6 +204,7 @@ if [ "$mode" = "start" ]; then
   iptables -t nat -A  POSTROUTING -o eth0 -j MASQUERADE
   iptables -i $interface -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
   iptables -i $interface -A INPUT -p tcp --dport 80 -j ACCEPT
+  iptables -i $interface -A INPUT -p udp --dport 67:68 -j ACCEPT
   iptables -i $interface -A INPUT -p udp --dport 53 -j ACCEPT
   iptables -i $interface -A INPUT -p tcp --dport 22 -j ACCEPT
   iptables -i $interface -A INPUT -j DROP
@@ -207,6 +240,7 @@ if [ "$mode" = "start" ]; then
 
   #Start the dhcp and dns server
   echo "Starting dnsmasq"
+  sleep .5
   systemctl restart dnsmasq
 
 #Check to see if the access point should be stopped
