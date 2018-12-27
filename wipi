@@ -6,14 +6,15 @@ showHelp() {
   echo "Used to create wireless access points with ease"
   echo
   echo "OPTIONS:"
-  echo -e "  -h  --help\t\t\tShows this menu"
-  echo -e "  -e  --essid\t<ESSID>\t\tESSID of the access point"
   echo -e "  -c  --channel\t<channel>\tChannel the access point is broadcasted on"
+  echo -e "  -e  --essid\t<ESSID>\t\tESSID of the access point"
   echo -e "  -d  --domain\t<domain>\tDomain name of the local network created by dnsmasq"
+  echo -e "  -h  --help\t\t\tShows this menu"
+  echo -e "  -i  --interface\t<interface>\tThe interface used to route traffic out of (default is eth0)"
   echo
   echo "Examples:"
   echo -e "  $(basename $0) start -c 1 -d foo.net --essid Foo wlan0"
-  echo -e "  $(basename $0) start -e 'Free WiFi' -c11 wlp3s0"
+  echo -e "  $(basename $0) start -e 'Free WiFi' -c11 -i enp2s0 wlp3s0"
   echo -e "  $(basename $0) stop wlan1"
 }
 
@@ -171,18 +172,19 @@ channel=1
 domain="mydomain.net"
 
 #Read the options and set them
-OPTIONS=`getopt -o he:c:d: --long help,essid:,channel: -n $(basename $0) -- "$@"`
+OPTIONS=`getopt -o hc:e:d:i: --long help,channel:,essid:,domain,interface -n $(basename $0) -- "$@"`
 eval set -- "$OPTIONS"
 
 #Extract options and their arguments into variables.
 while true ; do
     case "$1" in
         -h|--help) showHelp; exit 0 ;; #Show help
-        -e|--essid) shift; name=$1; shift; ;; #Set the name
-        -c|--channel) shift; channel=$1; shift; ;; #Set the channel
-        -d|--domain) shift; domain=$1; shift; ;; #Set the domain
+        -c|--channel) shift; channel=$1; shift ;; #Set the channel
+        -e|--essid) shift; name=$1; shift ;; #Set the name
+        -d|--domain) shift; domain=$1; shift ;; #Set the domain
+        -i|--interface) shift; ipInterface=$1; shift ;; #Set the domain
         --) shift ; break ;; #Break to parse non opts
-        *) echo "Internal error!" ; exit 1 ;; #SHTF! EXIT NOW!
+        *) echo "Internal error!";  exit 1 ;; #SHTF! EXIT NOW!
     esac
 done
 interface="$2"
@@ -201,13 +203,16 @@ if [ "$mode" = "start" ]; then
 
   echo "Creating new routing rules"
   iptables -F
-  iptables -t nat -A  POSTROUTING -o eth0 -j MASQUERADE
-  iptables -i $interface -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  iptables -i $interface -A INPUT -p tcp --dport 80 -j ACCEPT
-  iptables -i $interface -A INPUT -p udp --dport 67:68 -j ACCEPT
-  iptables -i $interface -A INPUT -p udp --dport 53 -j ACCEPT
-  iptables -i $interface -A INPUT -p tcp --dport 22 -j ACCEPT
-  iptables -i $interface -A INPUT -j DROP
+  iptables -t nat -A  POSTROUTING -o $ipInterface -j MASQUERADE
+  iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  #iptables -i $interface -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  #iptables -i $interface -A INPUT -p tcp --dport 443 -j ACCEPT
+  #iptables -i $interface -A INPUT -p tcp --dport 80 -j ACCEPT
+  #iptables -i $interface -A INPUT -p udp --dport 67:68 -j ACCEPT
+  #iptables -i $interface -A INPUT -p udp --dport 53 -j ACCEPT
+  #iptables -i $interface -A INPUT -p tcp --dport 53 -j ACCEPT
+  #iptables -i $interface -A INPUT -p tcp --dport 22 -j ACCEPT
+  #iptables -i $interface -A INPUT -j DROP
 
   #Enable ip forwarding
   echo "Enabling ip forwarding"

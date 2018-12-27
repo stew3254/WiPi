@@ -17,13 +17,17 @@ Usage: wipi [start|stop] [OPTIONS] <interface>
 Used to create wireless access points with ease
 
 OPTIONS:
-  -h  --help			Shows this menu
-  -e  --essid	<ESSID>		ESSID of the access point
   -c  --channel	<channel>	Channel the access point is broadcasted on
+  -e  --essid	<ESSID>		ESSID of the access point
+  -d  --domain	<domain>	Domain name of the local network created by dnsmasq
+  -h  --help			Shows this menu
+  -i  --interface	<interface>	The interface used to route traffic out of (default is eth0)
 
 Examples:
-  wipi start -e 'Free WiFi' -c11 wlan0
-  wipi stop wlan0
+  wipi start -c 1 -d foo.net --essid Foo wlan0
+  wipi start -e 'Free WiFi' -c11 -i enp2s0 wlp3s0
+  wipi stop wlan1
+
 ```
 
 **Pros:**
@@ -39,7 +43,6 @@ Examples:
 * It only does password-less WiFi access points
 * You can't choose your own ip address range to have people to connect to
 * If you break dnsmasq.conf and don't remove the file, this tool won't work
-* If you don't have interface eth0 as your route for internet traffic, then you're SOL for internet access on the access point
 * Doesn't know how to handle errors from other software well
 
 **Todo:**
