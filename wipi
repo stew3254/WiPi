@@ -1,21 +1,31 @@
 #!/bin/bash
 
+#Used to print verbose statements
+verbose() {
+  if [ $verbosity = true ]; then
+    for i in "$@"; do
+      echo $i
+    done
+  fi
+}
+
 #Show help
 showHelp() {
-  echo "Usage: $(basename $0) [start|stop] [OPTIONS] <interface>" >&2
+  echo "Usage: $(basename $0) [stop|start|restart] [OPTIONS] <interface>" >&2
   echo "Used to create wireless access points with ease"
   echo
   echo "OPTIONS:"
-  echo -e "  -c  --channel\t<channel>\tChannel the access point is broadcasted on"
-  echo -e "  -e  --essid\t<ESSID>\t\tESSID of the access point"
-  echo -e "  -d  --domain\t<domain>\tDomain name of the local network created by dnsmasq"
+  echo -e "  -c  --channel  <channel>\tChannel the access point is broadcasted on"
+  echo -e "  -e  --essid  <ESSID>\t\tESSID of the access point"
+  echo -e "  -d  --domain  <domain>\tDomain name of the local network created by dnsmasq"
   echo -e "  -h  --help\t\t\tShows this menu"
-  echo -e "  -i  --interface\t<interface>\tThe interface used to route traffic out of (default is eth0)"
+  echo -e "  -i  --interface  <interface>\tThe interface used to route traffic out of (default is eth0)"
+  echo -e "  -v  --verbose\t\t\tIncreases verbosity output of the program"
   echo
   echo "Examples:"
-  echo -e "  $(basename $0) start -c 1 -d foo.net --essid Foo wlan0"
-  echo -e "  $(basename $0) start -e 'Free WiFi' -c11 -i enp2s0 wlp3s0"
-  echo -e "  $(basename $0) stop wlan1"
+  echo "  $(basename $0) start -c 1 -d foo.net --essid Foo wlan0"
+  echo "  $(basename $0) restart -e 'Free WiFi' -c11 -i enp2s0 wlp3s0"
+  echo "  $(basename $0) stop wlan1"
 }
 
 #Check to see if the interface exists. If not, exit
@@ -26,9 +36,7 @@ checkInterface() {
   elif [ -z "`ip l | grep $interface`" ]; then
     echo "Interface $interface does not exist. Please choose an interface that exists"
     exit 1;
-  #Fix this syntax later to something better
-  elif [[ "`iwconfig &> /tmp/monitor; grep $interface /tmp/monitor`" = *"no wireless extensions."* ]]; then
-    rm /tmp/monitor
+  elif [ -z "`iw dev | grep $interface`" ]; then
     echo "Interface $interface isn't a wireless card. Please choose an interface that is"
     exit 1;
   elif [ -z "`iw list | grep monitor`" ]; then
@@ -67,7 +75,7 @@ setup() {
 
   #If config exists, leave it. Otherwise create a new one
   if [ $dnsmasqConfig = true ]; then
-    echo "dnsmasq config file found. Leaving existing config."
+    verbose "dnsmasq config file found. Leaving existing config."
   else
     echo "domain-needed" > /etc/dnsmasq.conf #Blocks incomplete requests from leaving the network
     echo "bogus-priv" >> /etc/dnsmasq.conf #Prevents private addresses from being forwarded
@@ -91,7 +99,7 @@ setup() {
     echo "log-dhcp" >> /etc/dnsmasq.conf #Logs dhcp
 
     echo "192.168.4.1 $domain" > /etc/dnsmasq.hosts #Creates a dns entry to allow the domain to be pinged
-    echo "dnsmasq config file not found. Created a new one"
+    verbose "dnsmasq config file not found. Created a new one"
   fi
 
   #Check to see if a hostapd config file exists
@@ -106,13 +114,13 @@ setup() {
 
   #If config exists, leave it. Otherwise create a new one
   if [ $hostapdConfig = true ]; then
-    echo "hostapd config file found. Creating a backup of the old one."
+    verbose "hostapd config file found. Creating a backup of the old one."
     mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.old
-    echo "Backup file located at /etc/hostapd/hostapd.conf.old"
+    verbose "Backup file located at /etc/hostapd/hostapd.conf.old"
     hostapdConfigure
   else
     hostapdConfigure
-    echo "hostapd config file not found. Created a new one"
+    verbose "hostapd config file not found. Created a new one"
   fi
 }
 
@@ -158,39 +166,7 @@ checkDepends() {
   setup
 }
 
-#Make sure user is root
-if [ $EUID -ne 0 ]; then
-  echo "You must be root in order to run this program"
-  exit 1
-fi
-
-#Set default parameters
-mode="$1"
-interface=""
-name="Test"
-channel=1
-domain="mydomain.net"
-
-#Read the options and set them
-OPTIONS=`getopt -o hc:e:d:i: --long help,channel:,essid:,domain,interface -n $(basename $0) -- "$@"`
-eval set -- "$OPTIONS"
-
-#Extract options and their arguments into variables.
-while true ; do
-    case "$1" in
-        -h|--help) showHelp; exit 0 ;; #Show help
-        -c|--channel) shift; channel=$1; shift ;; #Set the channel
-        -e|--essid) shift; name=$1; shift ;; #Set the name
-        -d|--domain) shift; domain=$1; shift ;; #Set the domain
-        -i|--interface) shift; ipInterface=$1; shift ;; #Set the domain
-        --) shift ; break ;; #Break to parse non opts
-        *) echo "Internal error!";  exit 1 ;; #SHTF! EXIT NOW!
-    esac
-done
-interface="$2"
-
-#Check to see if the access point should be started
-if [ "$mode" = "start" ]; then
+startAP() {
   #Check to see if the interface exists
   checkInterface
 
@@ -198,10 +174,10 @@ if [ "$mode" = "start" ]; then
   checkDepends
 
   #Set up iptables rules
-  echo "Saving existing iptables rules to /etc/iptables.ipv4.nat"
+  verbose "Saving existing iptables rules to /etc/iptables.ipv4.nat"
   sh -c "iptables-save" > /etc/iptables.ipv4.nat
 
-  echo "Creating new routing rules"
+  verbose "Creating new routing rules"
   iptables -F
   iptables -t nat -A  POSTROUTING -o $ipInterface -j MASQUERADE
   iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -215,53 +191,57 @@ if [ "$mode" = "start" ]; then
   #iptables -i $interface -A INPUT -j DROP
 
   #Enable ip forwarding
-  echo "Enabling ip forwarding"
-  echo 1 > /proc/sys/net/ipv4/ip_forward
+  if [ "`cat /proc/sys/net/ipv4/ip_forward`" -eq 0 ]; then
+    verbose "Enabling ip forwarding"
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+  fi
 
   #Killing conflicting processes
-  echo "Killing Network Manager"
+  verbose "Killing Network Manager"
   pkill NetworkManager
-  echo "Killing wpa supplicant"
+  verbose "Killing wpa supplicant"
   pkill wpa_supplicant
 
   #Configure hostapd
   hostapdConfigure
 
   #Set the access point into monitor mode
-  echo "Putting the interface into monitor mode"
+  verbose "Putting the interface into monitor mode"
   ip l set $interface down
   iwconfig $interface mode monitor
   ip l set $interface up
 
   #Start the access point
-  echo "Starting access point $name"
+  if [ "$mode" = "start" ]; then
+    echo "Starting access point $name"
+  fi
   hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
 
   #Add an ip address
-  echo "Adding static ip 192.168.4.1 to interface $interface"
+  verbose "Adding static ip 192.168.4.1 to interface $interface"
   ip a add 192.168.4.1/24 dev $interface
   #echo "Adding static route to 192.168.4.1"
   #ip r add default via 192.168.4.1 dev at0
 
   #Start the dhcp and dns server
-  echo "Starting dnsmasq"
+  verbose "Starting dnsmasq"
   sleep .5
   systemctl restart dnsmasq
+}
 
-#Check to see if the access point should be stopped
-elif [ "$mode" = "stop" ]; then
+stopAP() {
   #Check to see if the interface exists
   checkInterface
 
   #Kill dnsmasq
-  echo "Stopping dnsmasq"
+  verbose "Stopping dnsmasq"
   systemctl stop dnsmasq
 
   #Kill the access point
-  echo "Stopping hostapd"
+  verbose "Stopping hostapd"
   pkill hostapd
 
-  echo "Putting the interface back into managed mode"
+  verbose "Putting the interface back into managed mode"
   #Put the interface back into managed mode
   ip a del 192.168.4.1/24 dev $interface
   ip l set $interface down
@@ -269,9 +249,60 @@ elif [ "$mode" = "stop" ]; then
   ip l set $interface up
 
   #Restore iptables rules
-  echo "Restoring old iptables rules"
+  verbose "Restoring old iptables rules"
   iptables-restore < /etc/iptables.ipv4.nat
 
+  if [ "$mode" = "stop" ]; then
+    echo "Access point stopped"
+  fi
+}
+
+#Make sure user is root
+if [ $EUID -ne 0 ]; then
+  echo "You must be root in order to run this program"
+  exit 1
+fi
+
+#Set default parameters
+mode="$1"
+verbosity=false
+interface=""
+ipInterface="eth0"
+name="Test"
+channel=1
+domain="mydomain.net"
+
+#Read the options and set them
+OPTIONS=`getopt -o hvc:e:d:i: --long help,verbose,channel:,essid:,domain,interface -n $(basename $0) -- "$@"`
+eval set -- "$OPTIONS"
+
+#Extract options and their arguments into variables.
+while true ; do
+    case "$1" in
+        -h|--help) showHelp; exit 0 ;; #Show help
+        -v|--verbose) verbosity=true; shift ;; #Set verbosity flag to true
+        -c|--channel) shift; channel=$1; shift ;; #Set the channel
+        -e|--essid) shift; name=$1; shift ;; #Set the name
+        -d|--domain) shift; domain=$1; shift ;; #Set the domain
+        -i|--interface) shift; ipInterface=$1; shift ;; #Set the domain
+        --) shift ; break ;; #Break to parse non opts
+        *) echo "Internal error!";  exit 1 ;; #SHTF! EXIT NOW!
+    esac
+done
+interface="$2"
+
+#Check to see if the access point should be restarted
+if [ "$mode" = "restart" ];then
+  stopAP
+  startAP
+  echo "Restarted the access point."
+  echo "New name is $name"
+#Check to see if the access point should be started
+elif [ "$mode" = "start" ]; then
+  startAP
+#Check to see if the access point should be stopped
+elif [ "$mode" = "stop" ]; then
+  stopAP
 #Message for help if the command is used wrong
 else
   showHelp

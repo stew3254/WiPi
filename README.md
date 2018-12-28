@@ -13,21 +13,21 @@ Example help command:
 
 ```
 # wipi -h
-Usage: wipi [start|stop] [OPTIONS] <interface>
+Usage: wipi [stop|start|restart] [OPTIONS] <interface>
 Used to create wireless access points with ease
 
 OPTIONS:
-  -c  --channel	<channel>	Channel the access point is broadcasted on
-  -e  --essid	<ESSID>		ESSID of the access point
-  -d  --domain	<domain>	Domain name of the local network created by dnsmasq
+  -c  --channel  <channel>	Channel the access point is broadcasted on
+  -e  --essid  <ESSID>		ESSID of the access point
+  -d  --domain  <domain>	Domain name of the local network created by dnsmasq
   -h  --help			Shows this menu
-  -i  --interface	<interface>	The interface used to route traffic out of (default is eth0)
+  -i  --interface  <interface>	The interface used to route traffic out of (default is eth0)
+  -v  --verbose			Increases verbosity output of the program
 
 Examples:
   wipi start -c 1 -d foo.net --essid Foo wlan0
-  wipi start -e 'Free WiFi' -c11 -i enp2s0 wlp3s0
+  wipi restart -e 'Free WiFi' -c11 -i enp2s0 wlp3s0
   wipi stop wlan1
-
 ```
 
 **Pros:**
@@ -47,7 +47,6 @@ Examples:
 
 **Todo:**
 * Figure out why the hostapd service is masked and fix it
-* Verbose option to print more helpful output and then print almost none if not invoked
 * Make error checking a whole lot better
 * Make better documentation
   * Add code output examples
@@ -57,5 +56,5 @@ Examples:
 * Before starting or stopping an access point, check to see if the services are actually running first
 * More options to the access point such as password protection, and better iptables masquerading
 * Bridged access point mode option vs default NAT option
-* At least minimally check for proper dnsmasq and hostapd syntax
+* Maybe check for proper dnsmasq and hostapd syntax
 * Maybe allow tab completion for the next reasonable argument
