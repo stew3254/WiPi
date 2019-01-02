@@ -33,6 +33,7 @@ checkLoaded() {
   echo `systemctl status $1 | grep Loaded | cut -d ':' -f 2 | xargs | cut -d ' ' -f 1`
 }
 
+#TODO: Clean this whole thing up
 #Used to start the services
 startServices() {
   #What the function returns
@@ -58,11 +59,21 @@ startServices() {
         elif [ "$service" = "hostapd" ]; then
           verbose "Starting $service"
           hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
+        else
+          output=1
+          verbose "Failed to start $service"
+          break
         fi
       fi
-    elif [ -n "`pgrep $service`" ]; then
-      verbose "Starting $service"
-      pkill $service
+    #Check to see if the service isn't running and isn't actually running as a process
+    elif [ "`checkRunning $service`" != "running" ] && [ -z "`pgrep $service`" ]; then
+      if [ "$service" = "dnsmasq" ]; then
+        verbose "Starting $service"
+        dnsmasq
+      elif [ "$service" = "hostapd" ]; then
+        verbose "Starting $service"
+        hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
+      fi
     else
       output=1
       verbose "Failed to start $service because it is already running"
@@ -123,7 +134,7 @@ killServices() {
   #Make sure the services are inactive
   for service in "$@"; do
     if [ "`checkActive $service`" = "active" ] || [ -n "`pgrep $service`" ]; then
-      if [$output -eq 1 ]; then
+      if [ $output -eq 1 ]; then
         systemctl stop $service
         pkill $service
       else
