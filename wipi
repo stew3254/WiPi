@@ -18,9 +18,14 @@ checkFiles() {
   fi
 }
 
-#Check to see if a service is running
+#Check to see if a service is active
 checkActive() {
   echo `systemctl status $1 | grep Active | cut -d ':' -f 2 | xargs | cut -d ' ' -f 1`
+}
+
+#Check to see if a service is running
+checkRunning() {
+  echo `systemctl status $1 | grep Active | cut -d ':' -f 2 | xargs | cut -d ' ' -f 2 | tr '()' ' ' | xargs`
 }
 
 #Check to see if a service is loaded
@@ -65,13 +70,24 @@ startServices() {
     fi
   done
 
+  #TODO: Make this much cleaner in the future and maybe use more functions
   #Make sure the services are active
   for service in "$@"; do
     #TODO: Make sure this isn't an issue in the future
-    if [ "`checkActive $service`" != "active" ] && [ -z "`pgrep $service`" ]; then 
+    if [ "`checkActive $service`" != "active" ] && [ -z "`pgrep $service`" ]; then
       verbose "Failed to start $service because it is already running"
       output=1
       break
+    #TODO: Make sure this isn't an issue in the future
+    #Checks to tsee if the service is running
+    elif [ "`checkRunning $service`" != "running" ]; then 
+      if [ "$service" = "dnsmasq" ]; then
+        verbose "Starting $service"
+        dnsmasq
+      elif [ "$service" = "hostapd" ]; then
+        verbose "Starting $service"
+        hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
+      fi
     fi
   done
 
@@ -106,7 +122,7 @@ killServices() {
 
   #Make sure the services are inactive
   for service in "$@"; do
-    if [ "`checkActive $service`" = "active" ] && [ -n "`pgrep $service`" ]; then
+    if [ "`checkActive $service`" = "active" ] || [ -n "`pgrep $service`" ]; then
       if [$output -eq 1 ]; then
         systemctl stop $service
         pkill $service
