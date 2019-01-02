@@ -9,9 +9,122 @@ verbose() {
   fi
 }
 
+#Used to check if two files are the same by grabbing their md5 sums
+checkFiles() {
+  if [ "`md5sum $1 | cut -d ' ' -f 1`" != "`md5sum $2 | cut -d ' ' -f 1`" ]; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+#Check to see if a service is running
+checkActive() {
+  echo `systemctl status $1 | grep Active | cut -d ':' -f 2 | xargs | cut -d ' ' -f 1`
+}
+
+#Check to see if a service is loaded
+checkLoaded() {
+  echo `systemctl status $1 | grep Loaded | cut -d ':' -f 2 | xargs | cut -d ' ' -f 1`
+}
+
+#Used to start the services
+startServices() {
+  #What the function returns
+  local output=0
+
+  #Check through all of the services
+  for service in "$@"; do
+
+    #Attempt to start the services
+    if [ "`checkActive $service`" = "inactive" ]; then
+      if [ "`checkLoaded $service`" != "masked" ]; then
+        verbose "Starting $service"
+        systemctl start $service
+      else
+        #Check to see if service is running as a process
+        if [ -n "`pgrep $service`" ]; then
+          output=1
+          verbose "Failed to start $service because it is already running"
+          break
+        elif [ "$service" = "dnsmasq" ]; then
+          verbose "Starting $service"
+          dnsmasq
+        elif [ "$service" = "hostapd" ]; then
+          verbose "Starting $service"
+          hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
+        fi
+      fi
+    elif [ -n "`pgrep $service`" ]; then
+      verbose "Starting $service"
+      pkill $service
+    else
+      output=1
+      verbose "Failed to start $service because it is already running"
+      break
+    fi
+  done
+
+  #Make sure the services are active
+  for service in "$@"; do
+    #TODO: Make sure this isn't an issue in the future
+    if [ "`checkActive $service`" != "active" ] && [ -z "`pgrep $service`" ]; then 
+      verbose "Failed to start $service because it is already running"
+      output=1
+      break
+    fi
+  done
+
+  #Return of the function
+  echo $output
+}
+
+#Used to kill services
+killServices() {
+  #What the function returns
+  local output=0
+
+  #Check through all of the services
+  for service in "$@"; do
+
+    #Check to see if the service is active
+    if [ "`checkActive $service`" = "active" ]; then
+      verbose "Stopping $service"
+      systemctl stop $service
+    #If the service is a process, kill it
+    elif [ -n "`pgrep $service`" ]; then
+      verbose "Stopping $service"
+      pkill $service
+    #Otherwise error
+    else
+      output=1
+      verbose "Failed to stop $service because it isn't running"
+      break
+    fi
+
+  done
+
+  #Make sure the services are inactive
+  for service in "$@"; do
+    if [ "`checkActive $service`" = "active" ] && [ -n "`pgrep $service`" ]; then
+      if [$output -eq 1 ]; then
+        systemctl stop $service
+        pkill $service
+      else
+        output=1
+        verbose "Failed to stop $service because it isn't running"
+        break
+      fi
+    fi
+  done
+
+  #Return of the function
+  echo $output
+}
+
 #Show help
 showHelp() {
-  echo "Usage: $(basename $0) [stop|start|restart] [OPTIONS] <interface>" >&2
+  echo "Usage: $(basename $0) [stop|start|restart] [OPTIONS] <interface>"
   echo "Used to create wireless access points with ease"
   echo
   echo "OPTIONS:"
@@ -20,7 +133,7 @@ showHelp() {
   echo -e "  -d  --domain  <domain>\tDomain name of the local network created by dnsmasq"
   echo -e "  -h  --help\t\t\tShows this menu"
   echo -e "  -i  --interface  <interface>\tThe interface used to route traffic out of (default is eth0)"
-  echo -e "  -v  --verbose\t\t\tIncreases verbosity output of the program"
+  echo -e "  -v  --verbose\t\t\tIncreases verbosity of the output of the program"
   echo
   echo "Examples:"
   echo "  $(basename $0) start -c 1 -d foo.net --essid Foo wlan0"
@@ -28,7 +141,7 @@ showHelp() {
   echo "  $(basename $0) stop wlan1"
 }
 
-#Check to see if the interface exists. If not, exit
+#Check to see if the interface exists
 checkInterface() {
   if [ -z "$interface" ]; then
     echo "No interface specified. Please specify a wireless interface"
@@ -39,94 +152,106 @@ checkInterface() {
   elif [ -z "`iw dev | grep $interface`" ]; then
     echo "Interface $interface isn't a wireless card. Please choose an interface that is"
     exit 1;
-  elif [ -z "`iw list | grep monitor`" ]; then
-    echo "Interface $interface doesn't support monitor mode. Unfortunately this script won't work without that"
-    exit 1;
   fi
 }
 
 #Create new hostapd config file
 hostapdConfigure() {
-  #Create the config file
-  wap="interface=$interface\ndriver=nl80211\nssid=$name\nhw_mode=g\nchannel=$channel\nwmm_enabled=0\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0"
+  #Used to check if the config exists already
+  hostapdConfig=false
 
-  echo -e $wap> /etc/hostapd/hostapd.conf
+  #Config file
+  echo "interface=$interface" > /etc/hostapd/hostapd.conf.temp
+  echo "driver=nl80211" >> /etc/hostapd/hostapd.conf.temp
+  echo "ssid=$name" >> /etc/hostapd/hostapd.conf.temp
+  echo "hw_mode=g" >> /etc/hostapd/hostapd.conf.temp
+  echo "channel=$channel" >> /etc/hostapd/hostapd.conf.temp
+  echo "wmm_enabled=0" >> /etc/hostapd/hostapd.conf.temp
+  echo "macaddr_acl=0" >> /etc/hostapd/hostapd.conf.temp
+  echo "auth_algs=1" >> /etc/hostapd/hostapd.conf.temp
+  echo "ignore_broadcast_ssid=0" >> /etc/hostapd/hostapd.conf.temp
+
+  #Check to see if a hostapd config file exists
+  if [ -s /etc/hostapd/hostapd.conf ]; then
+    hostapdConfig=true
+  fi
+
+  #If config exists, leave it. Otherwise create a new one
+  if [ $hostapdConfig = true ]; then
+    if [ "`checkFiles /etc/hostapd/hostapd.conf.temp /etc/hostapd/hostapd.conf`" = "1" ]; then
+      verbose "hostapd config file found. Creating a backup of the old one"
+      mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.bkp
+      verbose "Backup file located at /etc/hostapd/hostapd.conf.bkp"
+    fi
+  else
+    verbose "hostapd config file not found. Creating a new one"
+  fi
+  mv /etc/hostapd/hostapd.conf.temp /etc/hostapd/hostapd.conf
 
   #Make sure our config file gets loaded
   sed -ie 's/DAEMON_CONF="/DAEMON_CONF="\/etc\/hostapd\/hostapd.conf/g' /etc/default/hostapd
   sed -ie 's/#DAEMON_CONF/DAEMON_CONF/g' /etc/default/hostapd
 }
 
-#Set up hostapd and dnsmasq
-setup() {
-  #dnsmasq and hostapd configs
+#Create new dnsmasq config file
+dnsmasqConfigure() {
+  #Used to check if the config exists already
   dnsmasqConfig=false
-  hostapdConfig=false
 
   #Check if the dnsmasq.conf file exists
-  checkConfig="`ls /etc | grep dnsmasq.conf`"
-  for i in $checkConfig; do
-    #Check to see if that exact config file exists
-    if [ "$i" = "dnsmasq.conf" ]; then
-      dnsmasqConfig=true
-      break
-    fi
-  done
+  if [ -s /etc/dnsmasq.conf ]; then
+    dnsmasqConfig=true
+  fi
 
-  #If config exists, leave it. Otherwise create a new one
+  echo "domain-needed" > /etc/dnsmasq.conf.temp #Blocks incomplete requests from leaving the network
+  echo "bogus-priv" >> /etc/dnsmasq.conf.temp #Prevents private addresses from being forwarded
+  echo "no-resolv" >> /etc/dnsmasq.conf.temp #Don't read /etc/resolv.conf for DNS servers
+  echo "domain=$domain" >> /etc/dnsmasq.conf.temp #Set the local domain
+  echo "expand-hosts" >> /etc/dnsmasq.conf.temp #Allow hosts to use this domain
+  echo "local=/$domain/ " >> /etc/dnsmasq.conf.temp #Ensures the domain is private
+  echo "listen-address=127.0.0.1" >> /etc/dnsmasq.conf.temp #Make sure dnsmasq listens on the right networks
+  echo "listen-address=192.168.4.1" >> /etc/dnsmasq.conf.temp #Make sure dnsmasq listens on the right networks
+  echo ""  >> /etc/dnsmasq.conf.temp
+  echo "interface=$interface" >> /etc/dnsmasq.conf.temp #Set the interface to route on 
+  echo "  dhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" >> /etc/dnsmasq.conf.temp #Set the ip range
+  echo "  dhcp-option=3,192.168.4.1" >> /etc/dnsmasq.conf.temp #Set the router IP
+  echo "  dhcp-option=6,192.168.4.1" >> /etc/dnsmasq.conf.temp #Set the DHCP server IP
+  echo "  server=8.8.8.8" >> /etc/dnsmasq.conf.temp #Set upstream DNS server to Google
+  echo "  server=8.8.4.4" >> /etc/dnsmasq.conf.temp #Set upstream DNS server to Google
+  echo ""  >> /etc/dnsmasq.conf.temp
+  echo "bind-interfaces" >> /etc/dnsmasq.conf.temp #Makes sure dnsmasq only listens on specified interfaces
+  echo "log-facility=/var/log/dnsmasq.log" >> /etc/dnsmasq.conf.temp #Set the logs file
+  echo "log-queries" >> /etc/dnsmasq.conf.temp #Logs queries
+  echo "log-dhcp" >> /etc/dnsmasq.conf.temp #Logs dhcp
+
+  #Check to see if the files are the same
   if [ $dnsmasqConfig = true ]; then
-    verbose "dnsmasq config file found. Leaving existing config."
-  else
-    echo "domain-needed" > /etc/dnsmasq.conf #Blocks incomplete requests from leaving the network
-    echo "bogus-priv" >> /etc/dnsmasq.conf #Prevents private addresses from being forwarded
-    echo "no-resolv" >> /etc/dnsmasq.conf #Don't read /etc/resolv.conf for DNS servers
-    echo "domain=$domain" >> /etc/dnsmasq.conf #Set the local domain
-    echo "expand-hosts" >> /etc/dnsmasq.conf #Allow hosts to use this domain
-    echo "local=/$domain/ " >> /etc/dnsmasq.conf #Ensures the domain is private
-    echo "listen-address=127.0.0.1" >> /etc/dnsmasq.conf #Make sure dnsmasq listens on the right networks
-    echo "listen-address=192.168.4.1" >> /etc/dnsmasq.conf #Make sure dnsmasq listens on the right networks
-    echo ""  >> /etc/dnsmasq.conf
-    echo "interface=$interface" >> /etc/dnsmasq.conf #Set the interface to route on 
-    echo "  dhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" >> /etc/dnsmasq.conf #Set the ip range
-    echo "  dhcp-option=3,192.168.4.1" >> /etc/dnsmasq.conf #Set the router IP
-    echo "  dhcp-option=6,192.168.4.1" >> /etc/dnsmasq.conf #Set the DHCP server IP
-    echo "  server=8.8.8.8" >> /etc/dnsmasq.conf #Set upstream DNS server to Google
-    echo "  server=8.8.4.4" >> /etc/dnsmasq.conf #Set upstream DNS server to Google
-    echo ""  >> /etc/dnsmasq.conf
-    echo "bind-interfaces" >> /etc/dnsmasq.conf #Makes sure dnsmasq only listens on specified interfaces
-    echo "log-facility=/var/log/dnsmasq.log" >> /etc/dnsmasq.conf #Set the logs file
-    echo "log-queries" >> /etc/dnsmasq.conf #Logs queries
-    echo "log-dhcp" >> /etc/dnsmasq.conf #Logs dhcp
-
-    echo "192.168.4.1 $domain" > /etc/dnsmasq.hosts #Creates a dns entry to allow the domain to be pinged
-    verbose "dnsmasq config file not found. Created a new one"
-  fi
-
-  #Check to see if a hostapd config file exists
-  checkConfig="`ls /etc/hostapd | grep hostapd.conf`"
-  for i in $checkConfig; do
-    #Check to see if that exact config file exists
-    if [ "$i" = "hostapd.conf" ]; then
-      hostapdConfig=true
-      break
+    if [ "`checkFiles /etc/dnsmasq.conf.temp /etc/dnsmasq.conf`" = "1"  ]; then
+      #Make a backup on failure
+      verbose "dnsmasq config file found. Backing up old one"
+      mv /etc/dnsmasq.conf /etc/dnsmasq.conf.bkp
+    else
+      #Remove the new config
+      rm /etc/dnsmasq.conf.temp
+      verbose "dnsmasq config file not found. Created a new one"
     fi
-  done
-
-  #If config exists, leave it. Otherwise create a new one
-  if [ $hostapdConfig = true ]; then
-    verbose "hostapd config file found. Creating a backup of the old one."
-    mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.old
-    verbose "Backup file located at /etc/hostapd/hostapd.conf.old"
-    hostapdConfigure
   else
-    hostapdConfigure
-    verbose "hostapd config file not found. Created a new one"
+    #Make the new configs
+    mv /etc/dnsmasq.conf.temp /etc/dnsmasq.conf
   fi
+
+  echo "192.168.4.1 $domain" > /etc/dnsmasq.hosts.temp #Creates a dns entry to allow the domain to be pinged
+    if [ "`checkFiles /etc/dnsmasq.hosts.temp /etc/dnsmasq.hosts`" = "1"  ]; then
+      mv /etc/dnsmasq.hosts /etc/dnsmasq.hosts.bkp
+      mv /etc/dnsmasq.hosts.temp /etc/dnsmasq.hosts 
+    else
+      rm /etc/dnsmasq.hosts.temp
+    fi
 }
 
 #Check to make sure the dependencies are installed
 checkDepends() {
-  depend="wireless-tools iptables hostapd dnsmasq"
+  depend="iptables hostapd dnsmasq"
 
   #Check for each dependency
   for item in $depend; do
@@ -163,7 +288,8 @@ checkDepends() {
     fi
   done
 
-  setup
+  dnsmasqConfigure
+  hostapdConfigure
 }
 
 startAP() {
@@ -197,61 +323,62 @@ startAP() {
   fi
 
   #Killing conflicting processes
-  verbose "Killing Network Manager"
-  pkill NetworkManager
-  verbose "Killing wpa supplicant"
-  pkill wpa_supplicant
+  if [ -n "`pgrep NetworkManager`" ]; then
+    verbose "Killing Network Manager"
+    pkill NetworkManager
+  fi
+
+  if [ -n "`pgrep wpa_supplicant`" ]; then
+    verbose "Killing wpa supplicant"
+    pkill wpa_supplicant
+  fi
 
   #Configure hostapd
   hostapdConfigure
 
-  #Set the access point into monitor mode
-  verbose "Putting the interface into monitor mode"
-  ip l set $interface down
-  iwconfig $interface mode monitor
+  #Bring the interface up
+  verbose "Bringing the interface up"
   ip l set $interface up
 
-  #Start the access point
-  if [ "$mode" = "start" ]; then
-    echo "Starting access point $name"
-  fi
-  hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
-
   #Add an ip address
-  verbose "Adding static ip 192.168.4.1 to interface $interface"
-  ip a add 192.168.4.1/24 dev $interface
-  #echo "Adding static route to 192.168.4.1"
-  #ip r add default via 192.168.4.1 dev at0
+  if [ -z "`ip a show $interface | grep 192.168.4.1/24`" ]; then
+    verbose "Adding static ip 192.168.4.1 to interface $interface"
+    ip a add 192.168.4.1/24 dev $interface
+  fi
 
-  #Start the dhcp and dns server
-  verbose "Starting dnsmasq"
-  sleep .5
-  systemctl restart dnsmasq
+  #Try to start services
+  if [ "`startServices hostapd dnsmasq`" -eq 1 ]; then
+    echo "Failed to start the access point (it's most likely already running)"
+  else
+    #Start the access point
+    if [ "$mode" = "start" ]; then
+      echo "Started access point $name"
+    fi
+  fi
 }
 
 stopAP() {
   #Check to see if the interface exists
   checkInterface
 
-  #Kill dnsmasq
-  verbose "Stopping dnsmasq"
-  systemctl stop dnsmasq
+  #Kill services
+  if [ `killServices hostapd dnsmasq` -eq 1 ] && [ "$mode" = "stop" ]; then
+    echo "Couldn't stop access point (it wasn't running)"
+    exit 1
+  fi
 
-  #Kill the access point
-  verbose "Stopping hostapd"
-  pkill hostapd
-
-  verbose "Putting the interface back into managed mode"
+  verbose "Removing static ip"
   #Put the interface back into managed mode
-  ip a del 192.168.4.1/24 dev $interface
-  ip l set $interface down
-  iwconfig $interface mode managed
-  ip l set $interface up
+  if [ -n "`ip a show $interface | grep 192.168.4.1/24`" ]; then
+    ip a del 192.168.4.1/24 dev $interface
+  fi
 
   #Restore iptables rules
   verbose "Restoring old iptables rules"
   iptables-restore < /etc/iptables.ipv4.nat
 
+  #Print access point stopped if the mode was told to stop
+  #This is here so if you restart it doesn't print the access point is stopped
   if [ "$mode" = "stop" ]; then
     echo "Access point stopped"
   fi
@@ -264,7 +391,12 @@ if [ $EUID -ne 0 ]; then
 fi
 
 #Set default parameters
-mode="$1"
+if [ -z "$1" ]; then
+  mode=""
+else
+  mode="$1"
+fi
+
 verbosity=false
 interface=""
 ipInterface="eth0"
@@ -293,15 +425,18 @@ interface="$2"
 
 #Check to see if the access point should be restarted
 if [ "$mode" = "restart" ];then
+  echo "Attempting to restart the access point"
   stopAP
   startAP
-  echo "Restarted the access point."
+  echo "Restarted the access point"
   echo "New name is $name"
 #Check to see if the access point should be started
 elif [ "$mode" = "start" ]; then
+  echo "Attempting to start the access point"
   startAP
 #Check to see if the access point should be stopped
 elif [ "$mode" = "stop" ]; then
+  echo "Attempting to stop the access point"
   stopAP
 #Message for help if the command is used wrong
 else

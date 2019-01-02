@@ -22,7 +22,7 @@ OPTIONS:
   -d  --domain  <domain>	Domain name of the local network created by dnsmasq
   -h  --help			Shows this menu
   -i  --interface  <interface>	The interface used to route traffic out of (default is eth0)
-  -v  --verbose			Increases verbosity output of the program
+  -v  --verbose			Increases verbosity of the output of the program
 
 Examples:
   wipi start -c 1 -d foo.net --essid Foo wlan0
@@ -36,6 +36,7 @@ Examples:
 * Automatically installs any software it needs (with user permission)
   * It also configures this software too
 * Can detect if it is run as root or not
+* Is pretty resilient if services or assigning ips break. The script can tell you what went wrong
 * Has a nice interface for command feedback and help
   * Examples are shown as well
 
@@ -43,17 +44,13 @@ Examples:
 * It only does password-less WiFi access points
 * You can't choose your own ip address range to have people to connect to
 * If you break dnsmasq.conf and don't remove the file, this tool won't work
-* Doesn't know how to handle errors from other software well
 
 **Todo:**
-* Figure out why the hostapd service is masked and fix it
-* Make error checking a whole lot better
 * Make better documentation
   * Add code output examples
   * Add a picture of the access point produced
   * Show the leases table to show the dhcp working and a client is connected
   * Show an output of the ping command from a connected client
-* Before starting or stopping an access point, check to see if the services are actually running first
 * More options to the access point such as password protection, and better iptables masquerading
 * Bridged access point mode option vs default NAT option
 * Maybe check for proper dnsmasq and hostapd syntax
