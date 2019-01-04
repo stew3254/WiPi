@@ -43,7 +43,7 @@ startServices() {
   for service in "$@"; do
 
     #Attempt to start the services
-    if [ "`checkActive $service`" = "inactive" ]; then
+    if [ "`checkActive $service`" != "active" ]; then
       if [ "`checkLoaded $service`" != "masked" ]; then
         verbose "Starting $service"
         systemctl start $service
@@ -58,7 +58,8 @@ startServices() {
           dnsmasq
         elif [ "$service" = "hostapd" ]; then
           verbose "Starting $service"
-          hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
+          echo "Hit here"
+          hostapd -d /etc/hostapd/hostapd.conf &> /root/WiPi/log &
         else
           output=1
           verbose "Failed to start $service"
@@ -79,27 +80,7 @@ startServices() {
       verbose "Failed to start $service because it is already running"
       break
     fi
-  done
 
-  #TODO: Make this much cleaner in the future and maybe use more functions
-  #Make sure the services are active
-  for service in "$@"; do
-    #TODO: Make sure this isn't an issue in the future
-    if [ "`checkActive $service`" != "active" ] && [ -z "`pgrep $service`" ]; then
-      verbose "Failed to start $service because it is already running"
-      output=1
-      break
-    #TODO: Make sure this isn't an issue in the future
-    #Checks to tsee if the service is running
-    elif [ "`checkRunning $service`" != "running" ]; then 
-      if [ "$service" = "dnsmasq" ]; then
-        verbose "Starting $service"
-        dnsmasq
-      elif [ "$service" = "hostapd" ]; then
-        verbose "Starting $service"
-        hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
-      fi
-    fi
   done
 
   #Return of the function
@@ -115,7 +96,7 @@ killServices() {
   for service in "$@"; do
 
     #Check to see if the service is active
-    if [ "`checkActive $service`" = "active" ]; then
+    if [ "`checkActive $service`" = "active" ] && [ "`checkRunning $service`" = "running" ]; then
       verbose "Stopping $service"
       systemctl stop $service
     #If the service is a process, kill it
@@ -124,6 +105,7 @@ killServices() {
       pkill $service
     #Otherwise error
     else
+      systemctl stop $service
       output=1
       verbose "Failed to stop $service because it isn't running"
       break
@@ -133,15 +115,18 @@ killServices() {
 
   #Make sure the services are inactive
   for service in "$@"; do
-    if [ "`checkActive $service`" = "active" ] || [ -n "`pgrep $service`" ]; then
-      if [ $output -eq 1 ]; then
-        systemctl stop $service
+    if [ $output -eq 1 ]; then
+      if [ -n "`pgrep $service`" ]; then
         pkill $service
-      else
-        output=1
-        verbose "Failed to stop $service because it isn't running"
-        break
       fi
+    elif [ "`checkActive $service`" = "active" ]; then
+      systemctl stop $service
+    elif [ -n "`pgrep $service`" ]; then
+      pkill $service
+    else
+      output=1
+      verbose "Failed to stop $service because it isn't running"
+      break
     fi
   done
 
@@ -216,7 +201,7 @@ hostapdConfigure() {
   mv /etc/hostapd/hostapd.conf.temp /etc/hostapd/hostapd.conf
 
   #Make sure our config file gets loaded
-  sed -ie 's/DAEMON_CONF="/DAEMON_CONF="\/etc\/hostapd\/hostapd.conf/g' /etc/default/hostapd
+  sed -ie 's/DAEMON_CONF=""/DAEMON_CONF="\/etc\/hostapd\/hostapd.conf"/g' /etc/default/hostapd
   sed -ie 's/#DAEMON_CONF/DAEMON_CONF/g' /etc/default/hostapd
 }
 
@@ -373,8 +358,10 @@ startAP() {
     ip a add 192.168.4.1/24 dev $interface
   fi
 
+  sleep 1
+
   #Try to start services
-  if [ "`startServices hostapd dnsmasq`" -eq 1 ]; then
+  if [ "`startServices hostapd dnsmasq`" = "1" ]; then
     echo "Failed to start the access point (it's most likely already running)"
   else
     #Start the access point
@@ -388,8 +375,9 @@ stopAP() {
   #Check to see if the interface exists
   checkInterface
 
+  local output=`killServices hostapd dnsmasq`
   #Kill services
-  if [ `killServices hostapd dnsmasq` -eq 1 ] && [ "$mode" = "stop" ]; then
+  if [ "$output" = "1" ] && [ "$mode" = "stop" ]; then
     echo "Couldn't stop access point (it wasn't running)"
     exit 1
   fi
@@ -467,5 +455,7 @@ elif [ "$mode" = "stop" ]; then
   stopAP
 #Message for help if the command is used wrong
 else
+  startServices hostapd dnsmasq
+  killServices hostapd dnsmasq
   showHelp
 fi
