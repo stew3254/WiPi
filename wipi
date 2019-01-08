@@ -1,5 +1,25 @@
 #!/bin/bash
 
+#Show help
+showHelp() {
+  echo "Usage: $(basename $0) [stop|start|restart] [OPTIONS] <interface>"
+  echo "Used to create wireless access points with ease"
+  echo
+  echo "OPTIONS:"
+  echo -e "  -c  --channel  <channel>\tChannel the access point is broadcasted on"
+  echo -e "  -e  --essid  <ESSID>\t\tESSID of the access point"
+  echo -e "  -d  --domain  <domain>\tDomain name of the local network created by dnsmasq"
+  echo -e "  -h  --help\t\t\tShows this menu"
+  echo -e "  -i  --interface  <interface>\tThe interface used to route traffic out of (default is eth0)"
+  echo -e "  -p  --password  <password>\tThe password of the access point (WPA2/PSK)"
+  echo -e "  -v  --verbose\t\t\tIncreases verbosity of the output of the program"
+  echo
+  echo "Examples:"
+  echo "  $(basename $0) start -c 1 -d foo.net --essid Foo -p Bar wlan0"
+  echo "  $(basename $0) restart -e 'Free WiFi' -c11 -i enp2s0 wlp3s0"
+  echo "  $(basename $0) stop wlan1"
+}
+
 #Used to print verbose statements
 verbose() {
   if [ $verbosity = true ]; then
@@ -58,8 +78,7 @@ startServices() {
           dnsmasq
         elif [ "$service" = "hostapd" ]; then
           verbose "Starting $service"
-          echo "Hit here"
-          hostapd -d /etc/hostapd/hostapd.conf &> /root/WiPi/log &
+          hostapd -d /etc/hostapd/hostapd.conf &> /dev/null &
         else
           output=1
           verbose "Failed to start $service"
@@ -124,33 +143,12 @@ killServices() {
     elif [ -n "`pgrep $service`" ]; then
       pkill $service
     else
-      output=1
-      verbose "Failed to stop $service because it isn't running"
       break
     fi
   done
 
   #Return of the function
   echo $output
-}
-
-#Show help
-showHelp() {
-  echo "Usage: $(basename $0) [stop|start|restart] [OPTIONS] <interface>"
-  echo "Used to create wireless access points with ease"
-  echo
-  echo "OPTIONS:"
-  echo -e "  -c  --channel  <channel>\tChannel the access point is broadcasted on"
-  echo -e "  -e  --essid  <ESSID>\t\tESSID of the access point"
-  echo -e "  -d  --domain  <domain>\tDomain name of the local network created by dnsmasq"
-  echo -e "  -h  --help\t\t\tShows this menu"
-  echo -e "  -i  --interface  <interface>\tThe interface used to route traffic out of (default is eth0)"
-  echo -e "  -v  --verbose\t\t\tIncreases verbosity of the output of the program"
-  echo
-  echo "Examples:"
-  echo "  $(basename $0) start -c 1 -d foo.net --essid Foo wlan0"
-  echo "  $(basename $0) restart -e 'Free WiFi' -c11 -i enp2s0 wlp3s0"
-  echo "  $(basename $0) stop wlan1"
 }
 
 #Check to see if the interface exists
@@ -182,6 +180,15 @@ hostapdConfigure() {
   echo "macaddr_acl=0" >> /etc/hostapd/hostapd.conf.temp
   echo "auth_algs=1" >> /etc/hostapd/hostapd.conf.temp
   echo "ignore_broadcast_ssid=0" >> /etc/hostapd/hostapd.conf.temp
+
+  #If access point is closed or not
+  if [ -n "$password" ]; then
+    echo "wpa=2" >> /etc/hostapd/hostapd.conf.temp
+    echo "wpa_passphrase=$password" >> /etc/hostapd/hostapd.conf.temp
+    echo "wpa_key_mgmt=WPA-PSK" >> /etc/hostapd/hostapd.conf.temp
+    echo "wpa_pairwise=TKIP" >> /etc/hostapd/hostapd.conf.temp
+    echo "rsn_pairwise=CCMP" >> /etc/hostapd/hostapd.conf.temp
+  fi
 
   #Check to see if a hostapd config file exists
   if [ -s /etc/hostapd/hostapd.conf ]; then
@@ -311,6 +318,25 @@ startAP() {
   #Check to make sure the dependencies are installed
   checkDepends
 
+  #Check to see if the status file exists
+  if [ -e /etc/wipi.status ]; then
+    #Check if the access point is running via status file
+    if [ "`cat /etc/wipi.status`" = "running" ]; then
+      echo "WiPi is already running. If this is a mistake, please remove /etc/wipi.status"
+      exit 1
+    #Error if in the wrong format
+    elif [ "`cat /etc/wipi.status`" != "stopped" ]; then
+      echo "Error reading /etc/wipi.status. Please remove it"
+      exit 1
+    else
+      #Proceed
+      echo "running" > /etc/wipi.status
+    fi
+  else
+    #Proceed
+    echo "running" > /etc/wipi.status
+  fi
+
   #Set up iptables rules
   verbose "Saving existing iptables rules to /etc/iptables.ipv4.nat"
   sh -c "iptables-save" > /etc/iptables.ipv4.nat
@@ -363,6 +389,8 @@ startAP() {
   #Try to start services
   if [ "`startServices hostapd dnsmasq`" = "1" ]; then
     echo "Failed to start the access point (it's most likely already running)"
+    ip a del 192.168.4.1/24 dev $interface
+    echo "stopped" > /etc/wipi.status
   else
     #Start the access point
     if [ "$mode" = "start" ]; then
@@ -375,17 +403,39 @@ stopAP() {
   #Check to see if the interface exists
   checkInterface
 
+  #Check to make sure the dependencies are installed
+  checkDepends
+
+  #Check to see if the status file exists
+  if [ -e /etc/wipi.status ]; then
+    #Check if the access point is running via status file
+    if [ "`cat /etc/wipi.status`" = "stopped" ] && [ "$mode" = "stop" ]; then
+      echo "WiPi is not running. If this is a mistake, please remove /etc/wipi.status"
+      exit 1
+    #Error if in the wrong format
+    elif [ "`cat /etc/wipi.status`" != "running" ] && [ "`cat /etc/wipi.status`" != "stopped" ]; then
+      echo "Error reading /etc/wipi.status. Please remove it"
+      exit 1
+    else
+      #Proceed
+      echo "stopped" > /etc/wipi.status
+    fi
+  else
+    #Proceed
+    echo "stopped" > /etc/wipi.status
+  fi
+
+  verbose "Removing static ip"
+  #Remove static IP
+  if [ -n "`ip a show $interface | grep 192.168.4.1/24`" ]; then
+    ip a del 192.168.4.1/24 dev $interface
+  fi
+
   local output=`killServices hostapd dnsmasq`
   #Kill services
   if [ "$output" = "1" ] && [ "$mode" = "stop" ]; then
     echo "Couldn't stop access point (it wasn't running)"
     exit 1
-  fi
-
-  verbose "Removing static ip"
-  #Put the interface back into managed mode
-  if [ -n "`ip a show $interface | grep 192.168.4.1/24`" ]; then
-    ip a del 192.168.4.1/24 dev $interface
   fi
 
   #Restore iptables rules
@@ -418,9 +468,10 @@ ipInterface="eth0"
 name="Test"
 channel=1
 domain="mydomain.net"
+password=""
 
 #Read the options and set them
-OPTIONS=`getopt -o hvc:e:d:i: --long help,verbose,channel:,essid:,domain,interface -n $(basename $0) -- "$@"`
+OPTIONS=`getopt -o hvc:e:d:i:p: --long help,verbose,channel:,essid:,domain,interface,password -n $(basename $0) -- "$@"`
 eval set -- "$OPTIONS"
 
 #Extract options and their arguments into variables.
@@ -429,9 +480,33 @@ while true ; do
         -h|--help) showHelp; exit 0 ;; #Show help
         -v|--verbose) verbosity=true; shift ;; #Set verbosity flag to true
         -c|--channel) shift; channel=$1; shift ;; #Set the channel
-        -e|--essid) shift; name=$1; shift ;; #Set the name
+        -e|--essid) #Set the name
+          shift
+          #Checks character length
+          if [ `echo $1 | wc -c` -gt 32 ]; then
+            echo "Name must be shorter than 33 characters"
+            exit 1
+          else
+            name=$1
+          fi
+          shift
+          ;;
         -d|--domain) shift; domain=$1; shift ;; #Set the domain
         -i|--interface) shift; ipInterface=$1; shift ;; #Set the domain
+        -p|--password) #Sets the password to the access point
+          shift
+          #Checks character length
+          if [ `echo $1 | wc -c` -lt 8 ]; then
+            echo "Password must be longer than 7 characters"
+            exit 1
+          elif [ `echo $1 | wc -c` -gt 32 ]; then
+            echo "Password must be shorter than 33 characters"
+            exit 1
+          else
+            password=$1
+          fi
+          shift
+          ;;
         --) shift ; break ;; #Break to parse non opts
         *) echo "Internal error!";  exit 1 ;; #SHTF! EXIT NOW!
     esac
@@ -455,7 +530,6 @@ elif [ "$mode" = "stop" ]; then
   stopAP
 #Message for help if the command is used wrong
 else
-  startServices hostapd dnsmasq
-  killServices hostapd dnsmasq
+  checkFiles /etc/hostapd/hostapd.conf.temp /etc/hostapd/hostapd.conf
   showHelp
 fi

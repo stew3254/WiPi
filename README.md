@@ -22,28 +22,33 @@ OPTIONS:
   -d  --domain  <domain>	Domain name of the local network created by dnsmasq
   -h  --help			Shows this menu
   -i  --interface  <interface>	The interface used to route traffic out of (default is eth0)
+  -p  --password  <password>	The password of the access point (WPA2/PSK)
   -v  --verbose			Increases verbosity of the output of the program
 
 Examples:
-  wipi start -c 1 -d foo.net --essid Foo wlan0
+  wipi start -c 1 -d foo.net --essid Foo -p Bar wlan0
   wipi restart -e 'Free WiFi' -c11 -i enp2s0 wlp3s0
   wipi stop wlan1
 ```
 
 **Pros:**
 * Takes seconds to set up a functioning access point with whatever name you choose
+* Can be used as an offline access point
 * It automatically sets up iptables rules to forward traffic out to the internet
 * Automatically installs any software it needs (with user permission)
   * It also configures this software too
 * Can detect if it is run as root or not
+* Can detect if the interface is a wireless adapter or not
+* Can allow for open or password protected WPA2 networks
 * Is pretty resilient if services or assigning ips break. The script can tell you what went wrong
 * Has a nice interface for command feedback and help
   * Examples are shown as well
+* Can be scripted to run on device startup (not easily afaik though, sorry)
 
 **Cons:**
-* It only does password-less WiFi access points
 * You can't choose your own ip address range to have people to connect to
-* If you break dnsmasq.conf and don't remove the file, this tool won't work
+* Doesn't support bridging straight into a network
+* If using several wireless adapters (one for wipi and one for internet), you need to restart wpa_supplicant in order to reconnect to an access point.
 
 **Todo:**
 * Make better documentation
