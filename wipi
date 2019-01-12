@@ -13,7 +13,7 @@ showHelp() {
   echo -e "  -i  --interface  <interface>\tThe interface used to route traffic out of (default is eth0)"
   echo -e "  -n  --nat  <static ip>\tThe static ip set to the NAT (The subnet mask is a /24)"
   echo -e "  -p  --password  <password>\tThe password of the access point (WPA2/PSK)"
-  echo -e "  -v  --verbose\t\t\tIncreases verbosity of the output of the program"
+  echo -e "  -v  --verbose\t\t\tVerbose mode. Shows much more output about what is going on"
   echo
   echo "Examples:"
   echo "  $(basename $0) start -c 1 -d foo.net --essid Foo -p Bar wlan0"
@@ -456,7 +456,7 @@ stopAP() {
 }
 
 #Make sure user is root
-if [ $EUID -ne 0 ]; then
+if [ "$EUID" != "0" ]; then
   echo "You must be root in order to run this program"
   exit 1
 fi
