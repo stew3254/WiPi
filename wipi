@@ -7,10 +7,11 @@ showHelp() {
   echo
   echo "OPTIONS:"
   echo -e "  -c  --channel  <channel>\tChannel the access point is broadcasted on"
-  echo -e "  -e  --essid  <ESSID>\t\tESSID of the access point"
+  echo -e "  -e  --essid  <ESSID>\t\tESSID of the access point (The default is 'WiPi AP')"
   echo -e "  -d  --domain  <domain>\tDomain name of the local network created by dnsmasq"
   echo -e "  -h  --help\t\t\tShows this menu"
   echo -e "  -i  --interface  <interface>\tThe interface used to route traffic out of (default is eth0)"
+  echo -e "  -n  --nat  <static ip>\tThe static ip set to the NAT (The subnet mask is a /24)"
   echo -e "  -p  --password  <password>\tThe password of the access point (WPA2/PSK)"
   echo -e "  -v  --verbose\t\t\tIncreases verbosity of the output of the program"
   echo
@@ -229,12 +230,12 @@ dnsmasqConfigure() {
   echo "expand-hosts" >> /etc/dnsmasq.conf.temp #Allow hosts to use this domain
   echo "local=/$domain/ " >> /etc/dnsmasq.conf.temp #Ensures the domain is private
   echo "listen-address=127.0.0.1" >> /etc/dnsmasq.conf.temp #Make sure dnsmasq listens on the right networks
-  echo "listen-address=192.168.4.1" >> /etc/dnsmasq.conf.temp #Make sure dnsmasq listens on the right networks
+  echo "listen-address=$staticIP" >> /etc/dnsmasq.conf.temp #Make sure dnsmasq listens on the right networks
   echo ""  >> /etc/dnsmasq.conf.temp
   echo "interface=$interface" >> /etc/dnsmasq.conf.temp #Set the interface to route on 
-  echo "  dhcp-range=192.168.4.2,192.168.4.254,255.255.255.0,5m" >> /etc/dnsmasq.conf.temp #Set the ip range
-  echo "  dhcp-option=3,192.168.4.1" >> /etc/dnsmasq.conf.temp #Set the router IP
-  echo "  dhcp-option=6,192.168.4.1" >> /etc/dnsmasq.conf.temp #Set the DHCP server IP
+  echo "  dhcp-range=$staticIPRange.2,$staticIPRange.254,255.255.255.0,5m" >> /etc/dnsmasq.conf.temp #Set the ip range
+  echo "  dhcp-option=3,$staticIP" >> /etc/dnsmasq.conf.temp #Set the router IP
+  echo "  dhcp-option=6,$staticIP" >> /etc/dnsmasq.conf.temp #Set the DHCP server IP
   echo "  server=8.8.8.8" >> /etc/dnsmasq.conf.temp #Set upstream DNS server to Google
   echo "  server=8.8.4.4" >> /etc/dnsmasq.conf.temp #Set upstream DNS server to Google
   echo ""  >> /etc/dnsmasq.conf.temp
@@ -259,7 +260,7 @@ dnsmasqConfigure() {
     mv /etc/dnsmasq.conf.temp /etc/dnsmasq.conf
   fi
 
-  echo "192.168.4.1 $domain" > /etc/dnsmasq.hosts.temp #Creates a dns entry to allow the domain to be pinged
+  echo "$staticIP $domain" > /etc/dnsmasq.hosts.temp #Creates a dns entry to allow the domain to be pinged
     if [ "`checkFiles /etc/dnsmasq.hosts.temp /etc/dnsmasq.hosts`" = "1"  ]; then
       mv /etc/dnsmasq.hosts /etc/dnsmasq.hosts.bkp
       mv /etc/dnsmasq.hosts.temp /etc/dnsmasq.hosts 
@@ -379,17 +380,22 @@ startAP() {
   ip l set $interface up
 
   #Add an ip address
-  if [ -z "`ip a show $interface | grep 192.168.4.1/24`" ]; then
-    verbose "Adding static ip 192.168.4.1 to interface $interface"
-    ip a add 192.168.4.1/24 dev $interface
+  if [ -z "`ip a show $interface | grep $staticIP/24`" ]; then
+    verbose "Adding static ip $staticIP to interface $interface"
+    ip a add $staticIP/24 dev $interface
   fi
 
-  sleep 1
+  #sleep 1
+
+  #Remove old leases
+  if [ -e /var/lib/misc/dnsmasq.leases ];then
+    rm /var/lib/misc/dnsmasq.leases 
+  fi
 
   #Try to start services
   if [ "`startServices hostapd dnsmasq`" = "1" ]; then
     echo "Failed to start the access point (it's most likely already running)"
-    ip a del 192.168.4.1/24 dev $interface
+    ip a del $staticIP/24 dev $interface
     echo "stopped" > /etc/wipi.status
   else
     #Start the access point
@@ -427,9 +433,9 @@ stopAP() {
 
   verbose "Removing static ip"
   #Remove static IP
-  if [ -n "`ip a show $interface | grep 192.168.4.1/24`" ]; then
-    ip a del 192.168.4.1/24 dev $interface
-  fi
+  for ip in "`ip a show $interface | grep inet | grep [.] | sed 's/\ \ */\ /g' | cut -d ' ' -f 3`"; do
+    ip a del $ip dev $interface
+  done
 
   local output=`killServices hostapd dnsmasq`
   #Kill services
@@ -465,13 +471,15 @@ fi
 verbosity=false
 interface=""
 ipInterface="eth0"
-name="Test"
+staticIP="192.168.4.1"
+staticIPRange="192.168.4"
+name="WiPi AP"
 channel=1
 domain="mydomain.net"
 password=""
 
 #Read the options and set them
-OPTIONS=`getopt -o hvc:e:d:i:p: --long help,verbose,channel:,essid:,domain,interface,password -n $(basename $0) -- "$@"`
+OPTIONS=`getopt -o hvc:e:d:i:n:p: --long help,verbose,channel:,essid:,domain:,interface:,nat:,password: -n $(basename $0) -- "$@"`
 eval set -- "$OPTIONS"
 
 #Extract options and their arguments into variables.
@@ -479,7 +487,16 @@ while true ; do
     case "$1" in
         -h|--help) showHelp; exit 0 ;; #Show help
         -v|--verbose) verbosity=true; shift ;; #Set verbosity flag to true
-        -c|--channel) shift; channel=$1; shift ;; #Set the channel
+        -c|--channel) #Set the channel
+          shift
+          if [ $1 -gt 11 ] || [ $1 -lt 1 ]; then
+            echo "The channel specified must be between 1 and 11"
+            exit 1
+          else
+            channel=$1
+          fi
+          shift
+          ;;
         -e|--essid) #Set the name
           shift
           #Checks character length
@@ -493,6 +510,43 @@ while true ; do
           ;;
         -d|--domain) shift; domain=$1; shift ;; #Set the domain
         -i|--interface) shift; ipInterface=$1; shift ;; #Set the domain
+        -n|--nat) #Set the domain
+          shift
+
+          #Replace dots with spaces
+          parts=`echo $1 | cut -d ' ' -f 1 | sed -e 's/\./\ /g'`
+
+          #Make sure there are 4 parts to the ip
+          if [ `echo $parts | wc -w` -eq 4 ]; then
+            count=0
+            #For each part in the array
+            for part in ${parts[@]}; do
+              count=`expr $count + 1`
+              #Make sure the number isn't too high
+              if [ $part -gt 254 ]; then
+                echo "IP is in an invalid format. Please use standard IPV4 notation"
+                exit 1
+              #Make sure the number isn't too low
+              elif [ $part -lt 0 ] && [ $count -lt 4 ]; then
+                echo "IP is in an invalid format. Please use standard IPV4 notation"
+                exit 1
+              #Make sure the number isn't too low
+              elif [ "$part" != "1" ] && [ $count -eq 4 ]; then
+                echo "Last digit in the static IP must be 1"
+                exit 1
+              fi
+            done
+          #If IP is not the right size
+          else
+            echo "IP is in an invalid format. Please use standard IPV4 notation"
+            exit 1
+          fi
+
+          #Set IP to the right size
+          staticIP=`echo $1 | cut -d ' ' -f 1`
+          staticIPRange=${staticIP::-2}
+          shift
+          ;;
         -p|--password) #Sets the password to the access point
           shift
           #Checks character length
@@ -530,6 +584,5 @@ elif [ "$mode" = "stop" ]; then
   stopAP
 #Message for help if the command is used wrong
 else
-  checkFiles /etc/hostapd/hostapd.conf.temp /etc/hostapd/hostapd.conf
   showHelp
 fi
