@@ -25,7 +25,6 @@ OPTIONS:
   -n  --nat  <static ip>	The static ip set to the NAT (The subnet mask is a /24)
   -p  --password  <password>	The password of the access point (WPA2/PSK)
   -v  --verbose			Increases verbosity of the output of the program
-  -v  --verbose			Verbose mode. Shows much more output about what is going on
 
 Examples:
   wipi start -c 1 -d foo.net --essid Foo -p FooBarBaz -n 192.168.0.1 wlan0
