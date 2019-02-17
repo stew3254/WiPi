@@ -2,9 +2,14 @@
 
 import sys
 import subprocess
+import os
 from exceptions import BadKeyValuePair
 
 def check(key, value):
+  """
+  Checks the key and value of an input. If it's bad, raise an exception. If it's good
+  add it to the environmental variables so the rest of the scripts can use it
+  """
   if key == "channel":
     try:
       #Make sure the value is right
@@ -12,9 +17,11 @@ def check(key, value):
         raise BadKeyValuePair("Channel must be an integer between 1 and 11")
     except ValueError:
       raise BadKeyValuePair("Channel must be an integer between 1 and 11")
+    os.environ["WIPI_CHANNEL"] = str(value)
 
-  elif key == "essid" and len(value) > 32:
-    raise BadKeyValuePair("ESSID must be less than 32 characters")
+  elif key == "essid" and len(value) < 1 and len(value) > 32:
+    raise BadKeyValuePair("ESSID must be between 1 and 32 characters")
+    os.environ["WIPI_ESSID"] = value
 
   elif key == "interface":
     exists = False
@@ -32,6 +39,7 @@ def check(key, value):
         pass
     if not exists:
       raise BadKeyValuePair("Interface does not exist")
+    os.environ["WIPI_INTERFACE"] = value
 
   elif key == "nat":
     octets = value.split(".")
@@ -56,7 +64,11 @@ def check(key, value):
       raise BadKeyValuePair("IPv4 has an improper CIDR notation specification")
     except ValueError:
       raise BadKeyValuePair("IPv4 address and CIDR notation must use integers")
+    os.environ["WIPI_NAT"] = value
+    os.environ["WIPI_IP"] = value.split("/")[0]
+    os.environ["WIPI_CIDR"] = value.split("/")[1]
 
   elif key == "password":
     if len(value) < 8 or len(value) > 64:
       raise BadKeyValuePair("Password must be between 8 and 64 characters")
+    os.environ["WIPI_PASSWORD"] = value

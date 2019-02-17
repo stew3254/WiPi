@@ -2,6 +2,7 @@
 
 from exceptions import *
 import checkargs
+import os
 
 
 class Config_Parser:
