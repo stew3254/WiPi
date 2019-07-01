@@ -1,33 +1,36 @@
 #!/bin/bash
 
 #Source needed functions
-source derp.sh
-source kill_services.sh
-source check_dependencies.sh
+source /etc/wipi/env_vars.sh
+source checks.sh
+source killServices.sh
+source startServices.sh
+source checkDependencies.sh
 
 #Check to see if the interface exists
+echo $WIPI_interface
 checkInterface $WIPI_INTERFACE
 
 #Check to make sure the dependencies are installed
 checkDepends
 
 #Check to see if the status file exists
-if [ -e /etc/wipi.status ]; then
+if [ -e /etc/wipi/wipi.status ]; then
   #Check if the access point is running via status file
-  if [ "`cat /etc/wipi.status`" = "running" ]; then
-    echo "WiPi is already running. If this is a mistake, please remove /etc/wipi.status"
+  if [ "`cat /etc/wipi/wipi.status`" = "running" ]; then
+    echo "WiPi is already running. If this is a mistake, please remove /etc/wipi/wipi.status"
     exit 1
   #Error if in the wrong format
-  elif [ "`cat /etc/wipi.status`" != "stopped" ]; then
-    echo "Error reading /etc/wipi.status. Please remove it"
+  elif [ "`cat /etc/wipi/wipi.status`" != "stopped" ]; then
+    echo "Error reading /etc/wipi/wipi.status. Please remove it"
     exit 1
   else
     #Proceed
-    echo "running" > /etc/wipi.status
+    echo "running" > /etc/wipi/wipi.status
   fi
 else
   #Proceed
-  echo "running" > /etc/wipi.status
+  echo "running" > /etc/wipi/wipi.status
 fi
 
 #Set up iptables rules
@@ -65,16 +68,16 @@ if [ -n "`pgrep wpa_supplicant`" ]; then
 fi
 
 #Configure hostapd
-hostapdConfigure
+#hostapdConfigure
 
 #Bring the interface up
 verbose "Bringing the interface up"
 ip l set $WIPI_INTERFACE up
 
 #Add an ip address
-if [ -z "`ip a show $WIPI_INTERFACE | grep $WIPI_NAT/$WIPI_CIDR`" ]; then
+if [ -z "`ip a show $WIPI_INTERFACE | grep $WIPI_NAT`" ]; then
   verbose "Adding static ip $WIPI_STATIC_IP to interface $WIPI_INTERFACE"
-  ip a add $WIPI_STATIC_IP/24 dev $WIPI_INTERFACE
+  ip a add $WIPI_NAT dev $WIPI_INTERFACE
 fi
 
 #sleep 1
@@ -87,8 +90,8 @@ fi
 #Try to start services
 if [ "`startServices hostapd dnsmasq`" = "1" ]; then
   echo "Failed to start the access point (it's most likely already running)"
-  ip a del $WIPI_STATIC_IP/24 dev $WIPI_INTERFACE
-  echo "stopped" > /etc/wipi.status
+  ip a del $WIPI_NAT dev $WIPI_INTERFACE
+  echo "stopped" > /etc/wipi/wipi.status
 else
   #Start the access point
   if [ "$WIPI_MODE" = "start" ]; then
