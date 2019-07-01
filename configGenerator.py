@@ -1,12 +1,18 @@
 #!/usr/bin/python3
 
+from configParser import ConfigParser
 import filecmp
 import sys
-import os.path
+import os
 from exceptions import *
 
 
 class Generate:
+  """
+  Used to generate the various config files
+  """
+  def __init__(self):
+    self.wipi()
 
   def _backup(self, new_file, old_file):
     """
@@ -20,38 +26,26 @@ class Generate:
     finally:
       os.rename(new_file, old_file)
 
-  #A more readable version explaining what the one above does in easier terms (doesn't get used)
-  def _to_netmask1(self, cidr):
+  def _to_netmask(self, cidr):
     """
     Takes a cidr notated ip address and returns the ip and the netmask
     """
-    netmask = ""
-    ip = cidr.split("/")[0]
-    mask = int(cidr.split("/")[1])
+    pair = cidr.split("/")
+    ip = pair[0]
+    mask = int(pair[1])
 
-    #Starts by subtracting each full byte
-    while mask >= 8:
-      netmask += "255."
-      mask -= 8
-    netmask = netmask.strip(".")
-
-    #Then while the length is too short (inputs into this will already be sanitized)
-    #Add the remaining bits
-    while len(netmask.strip(".").split(".")) != 4:
-      if mask > 0:
-        netmask += "." + str(2**8-2**(8-mask))
-        mask = 0
-      else:
-        netmask += ".0"
-
-    return ip, netmask.strip(".")
-
-  def netmask(self, cidr):
-    ip = cidr.split("/")[0]
-    mask = int(cidr.split("/")[1])
-
-    #Could also do this
-    #return lambda c:(c.split("/")[0],"".join([str((((~(2**(32-int(c.split("/")[1]))-1))%(2**32))&(255<<8*(3-i)))>>(8*(3-i)))+"." for i in range(4)]).rstrip("."))
+    #This code is a bunch of bit shifting in order to generate a netmask from CIDR notation.
+    #It first starts with finding the integer of 2**(32-mask)-1. This is used to find how
+    #many bits are left open in the range. Then, you subract one to get it in even byte sizes.
+    #It then nots all of the bits in that integer so that it will flop the bits from ones
+    #to zeros. This allows it to be in proper for like 255.255.255.0, not 0.0.0.255
+    #Next, it gets the remainder of it mod 2**32 so that it stays in the appropriate range.
+    #After that, it used bit shifting to grab each byte, one at a time, in the number.
+    #It does this by using a bitwise and with 255, which is a byte containing all ones.
+    #This all occurs in a for loop and grabs the bytes in order from most significant, to least.
+    #It uses this byte to and with the other bytes in the string to produce a copy of them
+    #which it stores in a list that gets joined together in a string using periods.
+    #Then it strips the last period on the right and returns the netmask.
 
     return ip, "".join([str((((~(2**(32-mask)-1))%(2**32))&(255<<8*(3-i)))>>(8*(3-i)))+"." for i in range(4)]).rstrip(".")
 
@@ -62,7 +56,34 @@ class Generate:
     #Returns a sum of all of the bits
     return ip + "/" + str(sum([bin(int(x)).count("1") for x in netmask.split(".")]))
 
-  def gen_hostapd(self, interface="wlan0", essid="WiPi AP", channel=1, password=None):
+  def _dhcp_range(self, ip, netmask):
+    """
+    Used to create a dhcp range out of an ip and a netmask
+    """
+    #start = "".join([ip.split(".")[i]+"." if i != 3 else "2" for i in range(4)])
+    start = []
+    end = []
+    
+    c = 1
+    #Iterate over each byte in the ip and netmask
+    for s_byte, n_byte in zip(ip.split("."), netmask.split(".")):
+      if c != 4:
+        #And the bytes to know where to properly start the range
+        start.append(str(int(s_byte) & int(n_byte)%2**8) + ".")
+        if start[c-1] < s_byte:
+          raise MalformedDHCP("Gateway shows up in dhcp range")
+        #Nor the bytes to know where to properly end the range
+        end.append(str((int(s_byte) | ~(int(n_byte))%2**8)) + ".")
+      else:
+        #Always have the last byte 2, because the id must be a 1
+        start.append("2")
+        end.append(str((int(s_byte) | ~(int(n_byte))%2**8) - 1))
+        print(n_byte)
+      c += 1
+
+    return "".join(start), "".join(end)
+
+  def hostapd(self, interface="wlan0", essid="WiPi AP", channel=1, password=None):
     """
     Used to configure the hostapd.conf, backup the old one if it's different and replace it
     """
@@ -124,11 +145,12 @@ class Generate:
         f.write('DAEMON_OPTS=""\n')
 
   #Configure the dnsamq.conf, backup the old one if it's different and replace it
-  def gen_dnsmasq(self, interface="wlan0", domain="mydomain.net", static_ip="192.168.4.1",
-              static_ip_range="255.255.255"):
+  def dnsmasq(self, interface="wlan0", domain="mydomain.net", cidr = "192.168.4.1/24"):
     """
     Used to configure the dnsmasq.conf, backup the old one if it's different and replace it
     """
+    ip, netmask = self._to_netmask(cidr)
+    start_ip, end_ip = self._dhcp_range(ip, netmask)
     with open("dnsmasq.conf", "w") as f:
       f.write("domain-needed\n") #Blocks incomplete requests from leaving the network
       f.write("bogus-priv\n") #Prevents private addresses from being forwarded
@@ -137,12 +159,12 @@ class Generate:
       f.write("expand-hosts\n") #Allow hosts to use this domain
       f.write("local=/{}/\n".format(domain)) #Ensures the domain is private
       f.write("listen-address=127.0.0.1\n") #Make sure dnsmasq listens on the right networks
-      f.write("listen-address={}\n".format(static_ip)) #Make sure dnsmasq listens on the right networks
+      f.write("listen-address={}\n".format(ip)) #Make sure dnsmasq listens on the right networks
       f.write("\n")
       f.write("interface={}\n".format(interface)) #Set the interface to route on 
-      f.write("  dhcp-range={}.2,{}.254,255.255.255.0,5m\n".format(static_ip_range, static_ip_range))  #Set the ip range #Set the router IP
-      f.write("  dhcp-option=3,{}\n".format(static_ip)) #Set the DHCP server IP
-      f.write("  dhcp-option=6,{}\n".format(static_ip)) #Set upstream DNS server to Google
+      f.write("  dhcp-range={},{},{},5m\n".format(start_ip, end_ip, netmask))  #Set the ip range #Set the router IP
+      f.write("  dhcp-option=3,{}\n".format(ip)) #Set the DHCP server IP
+      f.write("  dhcp-option=6,{}\n".format(ip)) #Set upstream DNS server to Google
       f.write("  server=8.8.8.8\n") #Set upstream DNS server to Google
       f.write("  server=8.8.4.4\n") #Set upstream DNS server to Google
       f.write("\n")
@@ -152,3 +174,62 @@ class Generate:
       f.write("log-dhcp\n") #Logs dhcp
 
     self._backup("dnsmasq.conf", "/etc/dnsmasq.conf")
+
+  def wipi(self):
+    if not os.path.isfile("/etc/wipi/wipi.conf") and os.path.exits("/etc/wipi/wipi.conf"):
+      os.rename("/etc/wipi/wipi.conf", "/etc/wipi/wipi.conf.bad")
+    if not os.path.exists("/etc/wipi/wipi.conf"):
+      with open("/etc/wipi/wipi.conf", "w") as f:
+        f.write("#This is the default config file. Any values stored here will be used as the defaults for wipi\n")
+        f.write("#Hashtags are used for inline comments\n")
+        f.write("#Values come in the following format:\n")
+        f.write("#   key = value\n")
+        f.write("# (Whitespace around the space gets ignored. Phrases also DO NOT use quotes)\n\n")
+        f.write("#This number must be between 1 and 11\n")
+        f.write("channel = 1\n")
+        f.write("#Do not use quotes around the name if it is multiple words\n")
+        f.write("#If don't use a '#' or '=' in your name\n")
+        f.write("essid = WiPi AP\n")
+        f.write("#Domain can be any thing you choose\n")
+        f.write("domain = mydomain.local\n")
+        f.write("#This interface must actually exist\n")
+        f.write("interface = eth0\n")
+        f.write("#Please include a correct IPv4 address with a proper CIDR subnet mask\n")
+        f.write("nat = 192.168.4.1/24\n")
+        f.write("#Comment password out if you do not want a password on your access point (Open)\n")
+        f.write("#password = password\n")
+
+  def set_env_vars(self, mode, interface, passed_vars={}):
+    parser = ConfigParser()
+    env_vars = parser.parse()
+    env_vars.update({"static_ip": env_vars["nat"].split("/")[0]})
+    if "password" not in env_vars.keys():
+      env_vars.update({"password": "None"})
+    for var in passed_vars.keys():
+      if var in env_vars.keys():
+        env_vars[var] = passed_vars[var]
+    print(env_vars)
+
+    with open("/etc/wipi/env_vars.sh", "w") as f:
+      try:
+        f.write("WIPI_CHANNEL={}\n".format(env_vars["channel"]))
+        f.write("WIPI_DOMAIN={}\n".format(env_vars["domain"]))
+        f.write("WIPI_ESSID=\"{}\"\n".format(env_vars["essid"]))
+        f.write("WIPI_INTERFACE={}\n".format(interface))
+        f.write("WIPI_NAT={}\n".format(env_vars["nat"]))
+        f.write("WIPI_MODE={}\n".format(mode))
+        f.write("WIPI_TRAFFIC_INTERFACE={}\n".format(env_vars["traffic_interface"]))
+        f.write("WIPI_STATIC_IP={}\n".format(env_vars["static_ip"]))
+        f.write("WIPI_PASSWORD=\"{}\"\n".format(env_vars["password"]))
+      except KeyError:
+        f.write("WIPI_CHANNEL={}\n".format(env_vars["channel"]))
+        f.write("WIPI_DOMAIN={}\n".format(env_vars["domain"]))
+        f.write("WIPI_ESSID=\"{}\"\n".format(env_vars["essid"]))
+        f.write("WIPI_INTERFACE={}\n".format(interface))
+        f.write("WIPI_NAT={}\n".format(env_vars["nat"]))
+        f.write("WIPI_MODE={}\n".format(mode))
+        #TODO see if this needs to be fixed
+        #f.write("WIPI_TRAFFIC_INTERFACE={}".format(env_vars["traffic_interface"]))
+        f.write("WIPI_TRAFFIC_INTERFACE={}\n".format("eth0"))
+        f.write("WIPI_STATIC_IP={}\n".format(env_vars["static_ip"]))
+        f.write("WIPI_PASSWORD=\"{}\"\n".format(env_vars["password"]))

@@ -1,22 +1,22 @@
 #!/usr/bin/python3
 
 from exceptions import *
-import checkargs
+import checkArgs
 import os
 
 
-class Config_Parser:
+class ConfigParser:
   """
   WiPi Config Parser
   """
   def __init__(self):
-    self._keywords = ["channel", "domain", "essid", "interface", "nat", "password"]
+    self._keywords = ["channel", "domain", "essid", "interface", "traffic_interface", "nat", "password"]
     self._used_keywords = []
 
   #Do a rough parse of the file
   def get_pairs(self):
     pairs = {}
-    with open("wipi.conf", "r") as f:
+    with open("/etc/wipi/wipi.conf", "r") as f:
       for line in f.readlines():
         line = line.strip()
         #Check that the line isn't empty
@@ -27,7 +27,7 @@ class Config_Parser:
 
           #Find invalid config options
           if key[0] != "#" and key not in self._keywords:
-            raise _BadKeyValuePair("_Bad key value")
+            raise BadKeyValuePair("Bad key {}".format(key))
 
           #Find reused config options
           elif key[0] != "#" and key in self._used_keywords:
@@ -36,7 +36,7 @@ class Config_Parser:
           #Find good config keys
           elif key[0] != "#" and key in self._keywords:
             if len(pair) != 2:
-              raise _BadKeyValuePair("There must only be 1 value")
+              raise BadKeyValuePair("There must only be 1 value")
             else:
               value = pair[1].strip()
               pairs.update({key: value})
@@ -48,4 +48,5 @@ class Config_Parser:
     #Look through all keys and get their values
     for key in pairs.keys():
       value = pairs[key]
-      checkargs.check(key, value)
+      checkArgs.check(key, value)
+    return pairs

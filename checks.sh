@@ -1,6 +1,7 @@
 #Used to print verbose statements
 verbose() {
-  if [ $verbosity = true ]; then
+  echo $verbosity
+  if [ $verbosity ]; then
     for i in "$@"; do
       echo $i
     done
@@ -33,6 +34,7 @@ checkLoaded() {
 
 #Check to see if the interface exists
 checkInterface() {
+  echo "$1"
   if [ -z "$1" ]; then
     echo "No interface specified. Please specify a wireless interface"
     exit 1;

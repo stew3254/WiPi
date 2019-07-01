@@ -1,9 +1,13 @@
 #!/usr/bin/python3
 
 import argparse
+import checkArgs
+import filecmp
+import subprocess
 import sys
-import checkargs
+import os
 from exceptions import *
+from configGenerator import Generate
 
 
 #Weird hacks to make argparse look pretty
@@ -68,19 +72,60 @@ group.add_argument("-v", "--verbose", help="increase output verbosity",
 #If no parameters are invoked, run the help command
 if len(sys.argv) == 1:
   parser.print_help()
+  sys.exit(1)
 else:
   args = parser.parse_args()
 
+  #Environmental variables to add to a dictionary
+  env = {"WIPI_MODE" : sys.argv[1]}
+
+  if sys.argv[1] != "start" and sys.argv[1]  != "restart" and sys.argv[1] != "stop":
+    raise BadAPMode("Tried to use a value other than stop, start, or restart")
+  if sys.argv[-1] not in subprocess.check_output("ip l", stderr=subprocess.STDOUT, shell=True).decode():
+    raise BadInterface("Bad interface option. This interface doesn't exist or is invalid")
+
   #Check arguments
   if args.channel != None:
-    checkargs.check("channel", args.channel)
-  elif args.domain != None:
-    checkargs.check("domain", args.domain)
-  elif args.essid != None:
-    checkargs.check("essid", args.essid)
-  elif args.interface != None:
-    checkargs.check("interface", args.interface)
-  elif args.nat != None:
-    checkargs.check("nat", args.nat)
-  elif args.password != None:
-    checkargs.check("password", args.password)
+    checkArgs.check("channel", args.channel)
+    env.update({"WIPI_CHANNEL": args.channel})
+  if args.domain != None:
+    checkArgs.check("domain", args.domain)
+    env.update({"WIPI_DOMAIN": args.domain})
+  if args.essid != None:
+    checkArgs.check("essid", args.essid)
+    env.update({"WIPI_ESSID": args.essid})
+  if args.interface != None:
+    checkArgs.check("traffic_interface", args.interface)
+    env.update({"WIPI_TRAFFIC_INTERFACE": args.interface})
+  if args.nat != None:
+    checkArgs.check("nat", args.nat)
+    env.update({"WIPI_NAT": args.nat})
+  if args.password != None:
+    checkArgs.check("password", args.password)
+    env.update({"WIPI_PASSWORD": args.password})
+
+  interface = sys.argv[-1]
+  checkArgs.check("interface", interface)
+
+  #Used to format the environmental variables in a format bash can use
+#  with open("env_vars.sh", "w") as f:
+#    with open("/etc/wipi/env_vars.sh", "r") as fo:
+#      for line in fo.readlines():
+#        written = False
+#        for key in env.keys():
+#          if key in line:
+#            value = line.split("=")[1].strip(' \t\n"')
+#            if env[key] in value:
+#              f.write(line.replace(value, env[key]) + "\n")
+#              written = True
+#        if not written:
+#          f.write(line + "\n")
+#        else:
+#          written = False
+
+  generator = Generate()
+  generator.set_env_vars(sys.argv[1], interface, env)
+
+  if "env_vars.sh" in os.listdir():
+    if not filecmp.cmp("env_vars.sh", "/etc/wipi/env_vars.sh"):
+      os.rename("env_vars.sh", "/etc/wipi/env_vars.sh")

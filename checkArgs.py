@@ -26,7 +26,7 @@ def check(key, value):
       raise BadKeyValuePair("ESSID must not contain a '#' or a '='")
 
 
-  elif key == "interface":
+  elif key == "traffic_interface":
     exists = False
     interfaces = []
     #Get a list of interfaces and split the output by line
@@ -49,7 +49,7 @@ def check(key, value):
     if len(octets) != 4:
       raise BadKeyValuePair("IPv4 address must contain 4 octets and a CIDR notatation")
     #Check the octets
-    for octet in range(4):
+    for octet in range(3):
       try:
         if int(octets[octet]) < 1 or int(octets[octet]) > 254:
           if octet == 3 and int(octects[octet]) != 1:
@@ -60,8 +60,8 @@ def check(key, value):
     try:
       #Get the last octet and subnet mask
       ip_id, subnet = octets[-1].split("/")
-      if int(ip_id) < 1 or int(ip_id) > 254:
-        raise BadKeyValuePair("IPV4 address must use integers between 1 and 254")
+      if int(ip_id) != 1:
+        raise BadKeyValuePair("IPV4 address id must end with 1")
       elif int(subnet) < 0 or int(subnet) > 31:
         raise BadKeyValuePair("CIDR notation for subnet mask must be between 0 and 31 (24 is recommended)")
     except IndexError:
